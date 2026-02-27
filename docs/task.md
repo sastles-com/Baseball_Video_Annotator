@@ -1,0 +1,27 @@
+# Video Annotation Tool Tasks
+
+- [ ] Planning
+  - [x] Write implementation plan and get user approval.
+  - [x] Update plan with React+FastAPI architecture and detailed baseball tagging requirements.
+- [x] Environment Setup
+  - [x] Initialize Python Virtual Environment & Install FastAPI.
+  - [x] Initialize React + Vite project.
+  - [x] Install dependencies (FastAPI, Uvicorn, Tailwind, Lucide React, etc.).
+- [ ] Core Features Implementation (Frontend)
+  - [/] Video Upload and Player Component.
+  - [ ] Custom Slider, Playback Controls, and Mouse Wheel Scrubbing.
+  - [ ] Keyboard Shortcuts (Play/Pause, Insert Bookmark, Seek).
+  - [ ] Bookmark (栞) insertion logic and chunk splitting.
+  - [ ] Feature: Right-click context menu for bookmarks and tags.
+  - [ ] Timeline visualization of bookmarks and chunks.
+  - [ ] Chunk selection and navigation.
+- [ ] Tagging & Metadata Features (Full Stack)
+  - [ ] UI for Global Video Tags (Teams, Pitcher).
+  - [ ] UI for Section Tags (Inning/Situation).
+  - [ ] UI for Chunk Tags (Pitch type, course, result).
+  - [ ] Tag Suggestion System (Frontend Autocomplete + Backend History API).
+  - [ ] JSON Export and Import logic.
+- [ ] Polish and Verification
+  - [ ] Refine UI/UX (modern aesthetic, responsive).
+  - [ ] Test video loading, scrubbing, and correct time matching.
+  - [ ] Write Walkthrough.
