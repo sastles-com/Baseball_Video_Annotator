@@ -9,7 +9,7 @@
 - 撮影の停止・再開による「フレームの飛び」をバックエンドで自動検出し、ブックマーク（栞）を自動挿入します。
 - **検出感度調整:** サイドバーまたは設定画面から感度（閾値）を調整し、再解析が可能です（デフォルト: 23.0）。
 
-![Main UI](file:///Users/katano/.gemini/antigravity/brain/4980539e-2221-417a-bd53-c5c94c98ab2f/main_ui_initial_1772233108204.png)
+![Main UI](docs/images/main_ui.png)
 *メイン画面: 動画プレイヤー、タイムライン、および右側のセグメントリスト*
 
 ### 2. インタラクティブなタイムライン
@@ -19,7 +19,7 @@
 ### 3. セグメント（チャンク）操作
 右側の `Video Segments` リストから各投球/シーンを選択できます。選択された範囲はタイムライン上で緑色にハイライトされます。
 
-![Selected Chunk](file:///Users/katano/.gemini/antigravity/brain/4980539e-2221-417a-bd53-c5c94c98ab2f/chunk_selected_ui_1772233145294.png)
+![Selected Chunk](docs/images/chunk_selected.png)
 *セグメント選択時の表示: 指定範囲が緑色で強調されます*
 
 ### 4. 動的タグ管理システム
@@ -27,7 +27,7 @@
 - **JSONインポート:** `tags.json` をアップロードすることで、チーム独自のタグ体系を一括で設定できます。
 - **クイックタグ:** 右クリックコンテキストメニューから、選択中のセグメントに対して瞬時にタグを付与できます。
 
-![Context Menu](file:///Users/katano/.gemini/antigravity/brain/4980539e-2221-417a-bd53-c5c94c98ab2f/context_menu_visible_1772233328609.png)
+![Context Menu](docs/images/context_menu.png)
 *右クリックメニュー: 栞の追加やタグ付けが素早く行えます*
 
 ## タグ設定ファイル (tags.json) の作成方法
