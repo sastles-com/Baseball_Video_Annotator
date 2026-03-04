@@ -61,73 +61,119 @@ async def detect_cuts(
     if not file.content_type or not file.content_type.startswith("video/"):
         raise HTTPException(status_code=400, detail="Uploaded file must be a video.")
 
-    async def stream_analysis():
-        # Save upload to a temp file
-        suffix = os.path.splitext(file.filename or "video")[1] or ".mp4"
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            tmp.write(await file.read())
-            tmp_path = tmp.name
+    # Save upload to a temp file
+    suffix = os.path.splitext(file.filename or "video")[1] or ".mp4"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(await file.read())
+        tmp_path = tmp.name
 
-        try:
-            cap = cv2.VideoCapture(tmp_path)
-            if not cap.isOpened():
-                yield json.dumps({"type": "error", "message": "Could not open video file"}) + "\n"
-                return
+    return StreamingResponse(_run_video_analysis(tmp_path, threshold, min_interval), media_type="application/x-ndjson")
 
-            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-            
-            yield json.dumps({"type": "start", "total_frames": total_frames}) + "\n"
+@app.post("/api/upload-chunk")
+async def upload_chunk(
+    chunk: UploadFile = File(...),
+    chunkIndex: int = Form(...),
+    totalChunks: int = Form(...),
+    sessionId: str = Form(...),
+    filename: str = Form(...)
+):
+    """
+    Receive a chunk of a video file and append it to a temporary file.
+    """
+    tmp_path = os.path.join(tempfile.gettempdir(), f"{sessionId}.part")
+    
+    # Append mode for index > 0, write mode for the first chunk
+    mode = "ab" if chunkIndex > 0 else "wb"
+    with open(tmp_path, mode) as f:
+        f.write(await chunk.read())
+        
+    return {"status": "success", "chunkIndex": chunkIndex, "totalChunks": totalChunks}
 
-            prev_gray = None
-            cut_times = []
-            last_cut_time = -min_interval
+@app.post("/api/detect-cuts-chunked")
+async def detect_cuts_chunked(
+    sessionId: str = Form(...),
+    filename: str = Form(...),
+    threshold: float = Form(50.0),
+    min_interval: float = Form(0.5),
+):
+    """
+    Start analysis on a fully assembled chunked video file.
+    """
+    tmp_path_part = os.path.join(tempfile.gettempdir(), f"{sessionId}.part")
+    
+    if not os.path.exists(tmp_path_part):
+        raise HTTPException(status_code=400, detail="Chunked file not found. Upload might have failed.")
+        
+    suffix = os.path.splitext(filename)[1] or ".mp4"
+    valid_tmp_path = os.path.join(tempfile.gettempdir(), f"{sessionId}{suffix}")
+    
+    # Rename to have a valid video extension for OpenCV
+    os.rename(tmp_path_part, valid_tmp_path)
+    
+    return StreamingResponse(_run_video_analysis(valid_tmp_path, threshold, min_interval), media_type="application/x-ndjson")
 
-            frame_idx = 0
-            # Report progress every 5%
-            report_step = max(1, total_frames // 20)
+async def _run_video_analysis(video_path: str, threshold: float, min_interval: float):
+    """
+    Shared generator function to run OpenCV analysis and yield JSON progress.
+    """
+    try:
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            yield json.dumps({"type": "error", "message": "Could not open video file"}) + "\n"
+            return
 
-            while True:
-                ret, frame = cap.read()
-                if not ret:
-                    break
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        
+        yield json.dumps({"type": "start", "total_frames": total_frames}) + "\n"
 
-                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                current_time_sec = frame_idx / fps
+        prev_gray = None
+        cut_times = []
+        last_cut_time = -min_interval
 
-                if prev_gray is not None:
-                    diff = float(np.mean(cv2.absdiff(gray, prev_gray)))
-                    if diff > threshold and (current_time_sec - last_cut_time) >= min_interval:
-                        cut_times.append(round(current_time_sec, 3))
-                        last_cut_time = current_time_sec
+        frame_idx = 0
+        # Report progress every 5%
+        report_step = max(1, total_frames // 20)
 
-                prev_gray = gray
-                frame_idx += 1
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
 
-                if frame_idx % report_step == 0:
-                    progress = int((frame_idx / total_frames) * 100)
-                    yield json.dumps({"type": "progress", "value": progress}) + "\n"
-                    # Give some breathing room for the stream
-                    await asyncio.sleep(0.01)
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            current_time_sec = frame_idx / fps
 
-            cap.release()
+            if prev_gray is not None:
+                diff = float(np.mean(cv2.absdiff(gray, prev_gray)))
+                if diff > threshold and (current_time_sec - last_cut_time) >= min_interval:
+                    cut_times.append(round(current_time_sec, 3))
+                    last_cut_time = current_time_sec
 
-            # Result
-            bookmarks = [{"id": str(uuid.uuid4()), "time": t} for t in cut_times]
-            final_json = json.dumps({
-                "type": "result",
-                "total_cuts": len(bookmarks),
-                "bookmarks": bookmarks
-            }) + "\n"
-            
-            # Padding to force Nginx buffer flush (typically 4KB needed, we send a bit)
-            padding = " " * 4096 + "\n"
-            yield final_json + padding
+            prev_gray = gray
+            frame_idx += 1
 
-        except Exception as e:
-            yield json.dumps({"type": "error", "message": str(e)}) + "\n"
-        finally:
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
+            if frame_idx % report_step == 0:
+                progress = int((frame_idx / total_frames) * 100)
+                yield json.dumps({"type": "progress", "value": progress}) + "\n"
+                # Give some breathing room for the stream
+                await asyncio.sleep(0.01)
 
-    return StreamingResponse(stream_analysis(), media_type="application/x-ndjson")
+        cap.release()
+
+        # Result
+        bookmarks = [{"id": str(uuid.uuid4()), "time": t} for t in cut_times]
+        final_json = json.dumps({
+            "type": "result",
+            "total_cuts": len(bookmarks),
+            "bookmarks": bookmarks
+        }) + "\n"
+        
+        # Padding to force Nginx buffer flush (typically 4KB needed, we send a bit)
+        padding = " " * 4096 + "\n"
+        yield final_json + padding
+
+    except Exception as e:
+        yield json.dumps({"type": "error", "message": str(e)}) + "\n"
+    finally:
+        if os.path.exists(video_path):
+            os.unlink(video_path)

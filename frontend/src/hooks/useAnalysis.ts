@@ -45,16 +45,45 @@ export const useAnalysis = () => {
         setAnalysisProgress(0);
 
         try {
-            const formData = new FormData();
-            formData.append('file', file);
-            formData.append('threshold', detectionThreshold.toString());
-
             const { backendUrl } = useVideoStore.getState();
             const baseUrl = backendUrl.endsWith('/') ? backendUrl.slice(0, -1) : backendUrl;
 
-            const response = await fetch(`${baseUrl}/api/detect-cuts`, {
+            // --- Chunked Upload Logic ---
+            const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
+            const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+            const sessionId = crypto.randomUUID ? crypto.randomUUID() : Date.now().toString() + Math.random().toString(36).substring(7);
+
+            for (let i = 0; i < totalChunks; i++) {
+                const start = i * CHUNK_SIZE;
+                const end = Math.min(start + CHUNK_SIZE, file.size);
+                const chunk = file.slice(start, end);
+
+                const chunkData = new FormData();
+                chunkData.append('chunk', chunk, file.name);
+                chunkData.append('chunkIndex', i.toString());
+                chunkData.append('totalChunks', totalChunks.toString());
+                chunkData.append('sessionId', sessionId);
+                chunkData.append('filename', file.name);
+
+                const uploadResponse = await fetch(`${baseUrl}/api/upload-chunk`, {
+                    method: 'POST',
+                    body: chunkData,
+                });
+
+                if (!uploadResponse.ok) {
+                    throw new Error(`Failed to upload chunk ${i + 1}/${totalChunks}`);
+                }
+            }
+
+            // --- Start Analysis on Assembled File ---
+            const analyzeData = new FormData();
+            analyzeData.append('sessionId', sessionId);
+            analyzeData.append('filename', file.name);
+            analyzeData.append('threshold', detectionThreshold.toString());
+
+            const response = await fetch(`${baseUrl}/api/detect-cuts-chunked`, {
                 method: 'POST',
-                body: formData,
+                body: analyzeData,
             });
 
             if (!response.body) return;
