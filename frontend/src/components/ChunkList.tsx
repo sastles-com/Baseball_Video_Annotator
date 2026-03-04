@@ -1,7 +1,7 @@
 import React, { memo } from 'react';
 import { useAnnotationStore } from '../store/annotationStore';
 import { useVideoStore } from '../store/videoStore';
-import { Tag as TagIcon, PlayCircle, Plus } from 'lucide-react';
+import { Tag as TagIcon, PlayCircle } from 'lucide-react';
 
 // Memoized Individual Chunk Item to avoid massive re-renders
 const ChunkItem = memo(({ chunk, index, isSelected, onClick }: {
@@ -62,7 +62,6 @@ export const ChunkList: React.FC = () => {
     const setSelectedChunkId = useAnnotationStore(state => state.setSelectedChunkId);
 
     const triggerSeek = useVideoStore(state => state.triggerSeek);
-    const duration = useVideoStore(state => state.duration);
 
     if (chunks.length === 0) {
         return (

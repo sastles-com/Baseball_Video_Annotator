@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { useVideoStore } from '../store/videoStore';
-import { Play, Pause, Volume2, VolumeX, BookmarkPlus, SkipBack, SkipForward } from 'lucide-react';
+import { Play, Pause, Volume2, VolumeX, BookmarkPlus, SkipBack, SkipForward, RefreshCw } from 'lucide-react';
 import { useAnnotationStore } from '../store/annotationStore';
 
 function formatTime(seconds: number): string {
@@ -11,7 +11,7 @@ function formatTime(seconds: number): string {
 }
 
 export const VideoPlayer: React.FC = React.memo(() => {
-    // Global State
+    // --- Global State ---
     const videoUrl = useVideoStore(state => state.videoUrl);
     const isPlaying = useVideoStore(state => state.isPlaying);
     const setIsPlaying = useVideoStore(state => state.setIsPlaying);
@@ -21,26 +21,31 @@ export const VideoPlayer: React.FC = React.memo(() => {
     const volume = useVideoStore(state => state.volume);
     const setVolume = useVideoStore(state => state.setVolume);
 
-    // EXPLICIT SEEK TRIGGER: VideoPlayer only seeks when this changes
+    // EXPLICIT SEEK TRIGGER: Use seekVersion to ensure reactivity
     const lastSeekTime = useVideoStore(state => state.lastSeekTime);
+    const seekVersion = useVideoStore(state => state.seekVersion);
 
     const { addBookmark } = useAnnotationStore();
 
-    // Refs for performance and coordination
+    // --- Refs for performance and state coordination ---
     const videoRef = useRef<HTMLVideoElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const lastStoreUpdateRef = useRef<number>(0);
-    const lastSeekRequestRef = useRef<number>(0);
+    const isScrubbingRef = useRef<boolean>(false);
 
-    // Local state for UI responsiveness
-    const [isInternalSeeking, setIsInternalSeeking] = useState(false);
+    // --- Local State for UI responsiveness ---
     const [localPlayed, setLocalPlayed] = useState(0);
     const [muted, setMuted] = useState(false);
+    const [isBuffering, setIsBuffering] = useState(false);
 
-    // Synchronize localPlayed to Video CurrentTime (instead of store's played)
-    // This removes the store-to-video reactivity loop
+    // Reset local state on video change
+    useEffect(() => {
+        setLocalPlayed(0);
+        setIsBuffering(false);
+        lastStoreUpdateRef.current = 0;
+    }, [videoUrl]);
 
-    // Handle Play/Pause
+    // --- Sync Play/Pause ---
     useEffect(() => {
         const video = videoRef.current;
         if (!video || !videoUrl) return;
@@ -55,78 +60,84 @@ export const VideoPlayer: React.FC = React.memo(() => {
         }
     }, [isPlaying, videoUrl, setIsPlaying]);
 
-    // Sync Volume
+    // --- Sync Volume ---
     useEffect(() => {
         if (videoRef.current) {
             videoRef.current.volume = muted ? 0 : volume;
         }
     }, [volume, muted]);
 
-    // --- PUSH-ONLY SEEK LOGIC ---
-    // React to the explicit seek trigger from the store
+    // --- EXTERNAL SEEK HANDLING (The Push Trigger) ---
     useEffect(() => {
         const video = videoRef.current;
         if (!video || lastSeekTime === null || !video.duration || isNaN(video.duration)) return;
 
-        console.log("VideoPlayer: PUSH SEEK ->", lastSeekTime);
+        // Perform the seek
         video.currentTime = lastSeekTime;
-        const newFraction = lastSeekTime / video.duration;
-        setLocalPlayed(newFraction);
-        setPlayed(newFraction);
-    }, [lastSeekTime, setPlayed]);
 
-    // Time Update (Video -> Store/UI)
-    // Throttled to reduce UI load
+        // Immediate UI update
+        const fraction = lastSeekTime / video.duration;
+        setLocalPlayed(fraction);
+        setPlayed(fraction);
+    }, [seekVersion, setPlayed]); // React to seekVersion, not just time
+
+    // --- TIME UPDATE (Video -> Store/UI) ---
     const handleTimeUpdate = () => {
         const video = videoRef.current;
-        if (!video || isInternalSeeking || video.duration <= 0) return;
+        if (!video || isScrubbingRef.current || video.duration <= 0) return;
 
         const now = Date.now();
         const lp = video.currentTime / video.duration;
-        setLocalPlayed(lp); // Keep local slider in sync with video real-time
 
-        if (now - lastStoreUpdateRef.current > 250) {
+        // 1. High-frequency local update for progress bar and timer
+        setLocalPlayed(lp);
+
+        // 2. Throttled store update for Timeline items (Markers, scrolling window)
+        // 60ms is roughly 16fps - smooth enough for Timeline playhead but low overhead
+        if (now - lastStoreUpdateRef.current > 60) {
             lastStoreUpdateRef.current = now;
-            setPlayed(lp); // Update store for other components (Timeline etc.)
+            setPlayed(lp);
         }
     };
 
     const handleLoadedMetadata = () => {
         if (videoRef.current) {
-            console.log("VideoPlayer: Metadata Loaded. Duration:", videoRef.current.duration);
             setDuration(videoRef.current.duration);
         }
     };
 
-    // --- Interactive Scrubbing (Slider) ---
-    const handleSeekMouseDown = () => {
-        setIsInternalSeeking(true);
-    };
-
-    const handleSeekMouseUp = () => {
-        setIsInternalSeeking(false);
-        const video = videoRef.current;
-        if (video && !isNaN(video.duration) && video.duration > 0) {
-            video.currentTime = localPlayed * video.duration;
-            setPlayed(localPlayed);
-        }
-    };
-
+    // --- INTERACTIVE SCRUBBING (Slider) ---
     const handleSeekChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const video = videoRef.current;
+        if (!video || isNaN(video.duration) || video.duration <= 0) return;
+
         const fraction = parseFloat(e.target.value);
         setLocalPlayed(fraction);
 
+        // Update video element immediately for visual feedback
+        video.currentTime = fraction * video.duration;
+
+        // Update store so Timeline follows during scrubbing
         const now = Date.now();
-        if (now - lastSeekRequestRef.current > 100) {
-            lastSeekRequestRef.current = now;
-            const video = videoRef.current;
-            if (video && !isNaN(video.duration) && video.duration > 0) {
-                video.currentTime = fraction * video.duration;
-            }
+        if (now - lastStoreUpdateRef.current > 60) {
+            lastStoreUpdateRef.current = now;
+            setPlayed(fraction);
         }
     };
 
-    // --- Wheel Frame Stepping ---
+    const handleSeekStart = () => {
+        isScrubbingRef.current = true;
+    };
+
+    const handleSeekEnd = () => {
+        isScrubbingRef.current = false;
+        const video = videoRef.current;
+        if (video && !isNaN(video.duration)) {
+            setPlayed(video.currentTime / video.duration);
+        }
+    };
+
+    // --- WHEEL FRAME STEPPING ---
     useEffect(() => {
         const container = containerRef.current;
         if (!container) return;
@@ -136,9 +147,10 @@ export const VideoPlayer: React.FC = React.memo(() => {
             const video = videoRef.current;
             if (!video || !videoUrl || isNaN(video.duration) || video.duration <= 0) return;
 
-            setIsInternalSeeking(true);
+            // Stop play during wheel interactions
             setIsPlaying(false);
 
+            // Framestep (approx 30fps)
             const step = -(Math.sign(e.deltaY)) * (1 / 30);
             const newTime = Math.min(video.duration, Math.max(0, video.currentTime + step));
 
@@ -146,15 +158,13 @@ export const VideoPlayer: React.FC = React.memo(() => {
             const lp = newTime / video.duration;
             setLocalPlayed(lp);
             setPlayed(lp);
-
-            window.clearTimeout((window as any)._wheelTimeout);
-            (window as any)._wheelTimeout = window.setTimeout(() => setIsInternalSeeking(false), 150);
         };
 
         container.addEventListener('wheel', handleWheel, { passive: false });
         return () => container.removeEventListener('wheel', handleWheel);
     }, [videoUrl, setIsPlaying, setPlayed]);
 
+    // --- JUMP TO BOOKMARK (Internal Shortcut) ---
     const jumpToBookmarkLocal = useCallback((direction: 'next' | 'prev') => {
         const { bookmarks, setSelectedChunkId, chunks } = useAnnotationStore.getState();
         if (bookmarks.length === 0) return;
@@ -175,13 +185,13 @@ export const VideoPlayer: React.FC = React.memo(() => {
         }
 
         video.currentTime = targetTime;
-        const np = targetTime / (duration || 1);
-        setPlayed(np);
+        const np = targetTime / (video.duration || 1);
         setLocalPlayed(np);
+        setPlayed(np);
 
         const targetChunk = chunks.find(c => Math.abs(c.startTime - targetTime) < 0.1);
         if (targetChunk) setSelectedChunkId(targetChunk.id);
-    }, [duration, setPlayed]);
+    }, [setPlayed]);
 
     if (!videoUrl) return null;
 
@@ -196,29 +206,34 @@ export const VideoPlayer: React.FC = React.memo(() => {
                 className="w-full h-full object-contain flex-1 cursor-pointer"
                 onTimeUpdate={handleTimeUpdate}
                 onLoadedMetadata={handleLoadedMetadata}
+                onWaiting={() => setIsBuffering(true)}
+                onPlaying={() => setIsBuffering(false)}
                 onEnded={() => setIsPlaying(false)}
                 onClick={() => setIsPlaying(!isPlaying)}
-                onError={(e) => {
-                    const error = (e.target as HTMLVideoElement).error;
-                    console.error("VideoPlayer Error:", error?.code, error?.message);
-                }}
                 playsInline
                 preload="auto"
-                autoPlay={false}
             />
 
+            {isBuffering && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/20 pointer-events-none">
+                    <RefreshCw className="text-emerald-500 animate-spin" size={48} />
+                </div>
+            )}
+
+            {/* Controls Overlay */}
             <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/95 to-transparent px-4 pb-4 pt-12 opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-10 pointer-events-none">
                 <div className="pointer-events-auto">
+                    {/* Scrubbing Bar */}
                     <input
                         type="range"
                         min={0}
                         max={1}
                         step={0.0001}
                         value={localPlayed}
-                        onMouseDown={handleSeekMouseDown}
+                        onMouseDown={handleSeekStart}
                         onChange={handleSeekChange}
-                        onMouseUp={handleSeekMouseUp}
-                        className="w-full h-1.5 mb-3 bg-neutral-600 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                        onMouseUp={handleSeekEnd}
+                        className="w-full h-1.5 mb-3 bg-neutral-600 rounded-lg appearance-none cursor-pointer accent-emerald-500 outline-none"
                     />
 
                     <div className="flex items-center justify-between">
@@ -233,15 +248,15 @@ export const VideoPlayer: React.FC = React.memo(() => {
                             <div className="flex items-center gap-1">
                                 <button
                                     onClick={() => jumpToBookmarkLocal('prev')}
-                                    title="Prev Bookmark"
-                                    className="text-neutral-400 hover:text-white transition-colors focus:outline-none p-1"
+                                    className="text-neutral-400 hover:text-white transition-colors p-1"
+                                    title="前の栞"
                                 >
                                     <SkipBack size={18} />
                                 </button>
                                 <button
                                     onClick={() => jumpToBookmarkLocal('next')}
-                                    title="Next Bookmark"
-                                    className="text-neutral-400 hover:text-white transition-colors focus:outline-none p-1"
+                                    className="text-neutral-400 hover:text-white transition-colors p-1"
+                                    title="次の栞"
                                 >
                                     <SkipForward size={18} />
                                 </button>
@@ -250,7 +265,7 @@ export const VideoPlayer: React.FC = React.memo(() => {
                             <div className="flex items-center gap-2 group/vol">
                                 <button
                                     onClick={() => setMuted(!muted)}
-                                    className="text-white hover:text-emerald-400 transition-colors focus:outline-none"
+                                    className="text-white hover:text-emerald-400 transition-colors"
                                 >
                                     {muted || volume === 0 ? <VolumeX size={18} /> : <Volume2 size={18} />}
                                 </button>
@@ -264,25 +279,22 @@ export const VideoPlayer: React.FC = React.memo(() => {
                                         setVolume(parseFloat(e.target.value));
                                         if (muted) setMuted(false);
                                     }}
-                                    className="w-0 opacity-0 group-hover/vol:w-20 group-hover/vol:opacity-100 transition-all duration-300 h-1.5 bg-neutral-600 rounded-lg appearance-none cursor-pointer accent-white"
+                                    className="w-0 opacity-0 group-hover/vol:w-20 group-hover/vol:opacity-100 transition-all duration-300 h-1 bg-neutral-600 rounded-lg appearance-none cursor-pointer accent-white"
                                 />
                             </div>
 
-                            <span className="text-xs text-neutral-300 font-mono tabular-nums">
+                            <span className="text-xs text-neutral-300 font-mono tabular-nums bg-black/40 px-2 py-0.5 rounded border border-neutral-800">
                                 {formatTime(localPlayed * duration)} / {formatTime(duration)}
                             </span>
                         </div>
 
-                        <div className="flex items-center gap-3">
-                            <button
-                                onClick={() => addBookmark(localPlayed * duration)}
-                                title="Add Bookmark (B)"
-                                className="flex items-center gap-1.5 text-xs text-neutral-300 hover:text-emerald-400 transition-colors focus:outline-none"
-                            >
-                                <BookmarkPlus size={16} />
-                                栞を挿入 (B)
-                            </button>
-                        </div>
+                        <button
+                            onClick={() => addBookmark(localPlayed * duration)}
+                            className="flex items-center gap-1.5 text-xs text-neutral-300 hover:text-emerald-400 transition-colors focus:outline-none"
+                        >
+                            <BookmarkPlus size={16} />
+                            栞を挿入 (B)
+                        </button>
                     </div>
                 </div>
             </div>
