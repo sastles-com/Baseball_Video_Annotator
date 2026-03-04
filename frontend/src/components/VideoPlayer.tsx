@@ -11,19 +11,25 @@ function formatTime(seconds: number): string {
 }
 
 export const VideoPlayer: React.FC = React.memo(() => {
-    // --- Global State ---
-    const {
-        videoUrl, isPlaying, setIsPlaying, setDuration,
-        setPlayed, duration, played, volume, setVolume,
-        lastSeekTime, seekVersion
-    } = useVideoStore();
+    // --- Global State (Selective to avoid excessive re-render) ---
+    const videoUrl = useVideoStore(state => state.videoUrl);
+    const isPlaying = useVideoStore(state => state.isPlaying);
+    const setIsPlaying = useVideoStore(state => state.setIsPlaying);
+    const duration = useVideoStore(state => state.duration);
+    const setDuration = useVideoStore(state => state.setDuration);
+    const played = useVideoStore(state => state.played);
+    const setPlayed = useVideoStore(state => state.setPlayed);
+    const volume = useVideoStore(state => state.volume);
+    const setVolume = useVideoStore(state => state.setVolume);
+    const lastSeekTime = useVideoStore(state => state.lastSeekTime);
+    const seekVersion = useVideoStore(state => state.seekVersion);
 
     const { addBookmark } = useAnnotationStore();
 
     // --- Refs ---
     const videoRef = useRef<HTMLVideoElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
-    const lastStoreUpdateRef = useRef<number>(0);
+    const lastWheelSeekRef = useRef<number>(0);
 
     // --- Local State ---
     const [seeking, setSeeking] = useState(false);
@@ -48,21 +54,19 @@ export const VideoPlayer: React.FC = React.memo(() => {
         }
     }, [volume, muted]);
 
-    // --- 3. BI-DIRECTIONAL SYNC (The "Initial Version" logic) ---
-    // This allows the Video to follow the Store (played) AND the Store to follow the Video.
-    // The key is the 0.1s threshold which prevents the infinite loop.
+    // --- 3. BI-DIRECTIONAL SYNC (Hybrid V2.5 Logic) ---
+    // Only seek if the difference is significant to break loop.
     useEffect(() => {
         const video = videoRef.current;
         if (!video || seeking || !videoUrl || !video.duration) return;
 
         const storeTime = played * video.duration;
-        if (Math.abs(video.currentTime - storeTime) > 0.1) {
+        if (Math.abs(video.currentTime - storeTime) > 0.15) { // Increased slightly for stability
             video.currentTime = storeTime;
         }
     }, [played, seeking, videoUrl]);
 
-    // --- 4. EXPLICIT SEEK TRIGGER (V2.4 enhancement) ---
-    // Ensures same-time jumps (like re-clicking a bookmark) always work.
+    // --- 4. EXPLICIT SEEK TRIGGER (Bookmarks/Jumps) ---
     useEffect(() => {
         const video = videoRef.current;
         if (!video || lastSeekTime === null || !video.duration) return;
@@ -70,12 +74,10 @@ export const VideoPlayer: React.FC = React.memo(() => {
         setPlayed(lastSeekTime / video.duration);
     }, [seekVersion]);
 
-    // --- 5. TIME UPDATE (Video -> Store) ---
+    // --- 5. TIME UPDATE ---
     const handleTimeUpdate = () => {
         const video = videoRef.current;
         if (!video || seeking || video.duration <= 0) return;
-
-        // Continuous update to store to keep Timeline in sync
         setPlayed(video.currentTime / video.duration);
     };
 
@@ -85,7 +87,7 @@ export const VideoPlayer: React.FC = React.memo(() => {
         }
     };
 
-    // --- 6. MOUSE WHEEL SCRUBBING ---
+    // --- 6. MOUSE WHEEL SCRUBBING (Throttled) ---
     useEffect(() => {
         const container = containerRef.current;
         if (!container) return;
@@ -95,7 +97,14 @@ export const VideoPlayer: React.FC = React.memo(() => {
             const video = videoRef.current;
             if (!video || !videoUrl || !video.duration) return;
 
-            setIsPlaying(false);
+            // Stop playback during active wheel interaction
+            if (isPlaying) setIsPlaying(false);
+
+            const now = Date.now();
+            // Throttle to 30ms (approx 33fps max) to prevent decoder hang on Mac
+            if (now - lastWheelSeekRef.current < 30) return;
+            lastWheelSeekRef.current = now;
+
             const frameTime = 1 / 30;
             const step = -(e.deltaY / 20) * frameTime;
             const newTime = Math.min(video.duration, Math.max(0, video.currentTime + step));
@@ -106,7 +115,7 @@ export const VideoPlayer: React.FC = React.memo(() => {
 
         container.addEventListener('wheel', handleWheel, { passive: false });
         return () => container.removeEventListener('wheel', handleWheel);
-    }, [videoUrl, setIsPlaying, setPlayed]);
+    }, [videoUrl, isPlaying, setIsPlaying, setPlayed]);
 
     // --- 7. SLIDER HANDLERS ---
     const handleSeekMouseDown = () => setSeeking(true);
@@ -124,7 +133,7 @@ export const VideoPlayer: React.FC = React.memo(() => {
         const { bookmarks, setSelectedChunkId, chunks } = useAnnotationStore.getState();
         if (bookmarks.length === 0) return;
         const video = videoRef.current;
-        if (!video) return;
+        if (!video || !video.duration) return;
 
         const currentT = video.currentTime;
         let targetTime = 0;
@@ -139,7 +148,7 @@ export const VideoPlayer: React.FC = React.memo(() => {
         }
 
         video.currentTime = targetTime;
-        setPlayed(targetTime / (video.duration || 1));
+        setPlayed(targetTime / video.duration);
 
         const targetChunk = chunks.find(c => Math.abs(c.startTime - targetTime) < 0.1);
         if (targetChunk) setSelectedChunkId(targetChunk.id);
@@ -160,6 +169,8 @@ export const VideoPlayer: React.FC = React.memo(() => {
                 onLoadedMetadata={handleLoadedMetadata}
                 onWaiting={() => setIsBuffering(true)}
                 onPlaying={() => setIsBuffering(false)}
+                onSeeked={() => setIsBuffering(false)}
+                onCanPlay={() => setIsBuffering(false)}
                 onEnded={() => setIsPlaying(false)}
                 onClick={() => setIsPlaying(!isPlaying)}
                 playsInline
@@ -167,7 +178,7 @@ export const VideoPlayer: React.FC = React.memo(() => {
             />
 
             {isBuffering && (
-                <div className="absolute inset-0 flex items-center justify-center bg-black/20 pointer-events-none">
+                <div className="absolute inset-0 flex items-center justify-center bg-black/20 pointer-events-none z-20">
                     <RefreshCw className="text-emerald-500 animate-spin" size={48} />
                 </div>
             )}
