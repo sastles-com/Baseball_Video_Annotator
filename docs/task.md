@@ -23,4 +23,5 @@
   - [x] Verify all keyboard shortcuts.
   - [x] Complete walkthrough (Include Delete Bookmark & JSON Import).
   - [x] Deploy to Lolipop Managed Cloud (Fixing Nginx/CORS/Disk limits).
+  - [x] Debugging Video Playback & Seeking issues (Memoization & Async processing).
 
