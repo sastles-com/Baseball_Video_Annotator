@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect, useCallback } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { useVideoStore } from '../store/videoStore';
 import { Play, Pause, Volume2, VolumeX, BookmarkPlus, SkipBack, SkipForward } from 'lucide-react';
 import { useAnnotationStore } from '../store/annotationStore';
@@ -9,6 +9,38 @@ function formatTime(seconds: number): string {
     const s = Math.floor(seconds % 60);
     return `${m}:${s.toString().padStart(2, '0')}`;
 }
+
+interface VideoElementProps {
+    src: string;
+    videoRef: React.RefObject<HTMLVideoElement | null>;
+    onTimeUpdate: () => void;
+    onLoadedMetadata: () => void;
+    onEnded: () => void;
+    onClick: () => void;
+}
+
+// Separate component to isolate the <video> tag from frequent re-renders of the parent
+const VideoElement: React.FC<VideoElementProps> = React.memo(({ src, videoRef, onTimeUpdate, onLoadedMetadata, onEnded, onClick }) => {
+    console.log("VideoElement rendering with src length:", src.length);
+    return (
+        <video
+            ref={videoRef}
+            src={src}
+            className="w-full h-full object-contain flex-1 cursor-pointer"
+            onTimeUpdate={onTimeUpdate}
+            onLoadedMetadata={onLoadedMetadata}
+            onEnded={onEnded}
+            onClick={onClick}
+            onSeeking={() => console.log("Video status: seeking...")}
+            onSeeked={() => console.log("Video status: seeked")}
+            onWaiting={() => console.log("Video status: waiting...")}
+            onCanPlay={() => console.log("Video status: canplay")}
+            playsInline
+            preload="auto"
+            crossOrigin="anonymous"
+        />
+    );
+}, (prev, next) => prev.src === next.src);
 
 export const VideoPlayer: React.FC = React.memo(() => {
     // Select only needed state to avoid unnecessary re-renders
@@ -28,36 +60,33 @@ export const VideoPlayer: React.FC = React.memo(() => {
     const [seeking, setSeeking] = useState(false);
     const [muted, setMuted] = useState(false);
 
-    // Initial log for debugging
+    // Initial log
     useEffect(() => {
-        console.log("VideoPlayer mounted. videoUrl length:", videoUrl?.length || 0);
+        console.log("VideoPlayer mounted");
+        return () => console.log("VideoPlayer unmounted");
     }, []);
 
-    // Sync play/pause state
+    // Sync play/pause
     useEffect(() => {
         const video = videoRef.current;
         if (!video || !videoUrl) return;
 
         if (isPlaying) {
-            console.log("Calling video.play()");
             video.play().catch(err => {
-                console.warn("Autoplay/Play blocked or failed:", err);
+                console.warn("Play blocked:", err);
                 setIsPlaying(false);
             });
         } else {
-            console.log("Calling video.pause()");
             video.pause();
         }
     }, [isPlaying, videoUrl, setIsPlaying]);
 
     // Sync volume
     useEffect(() => {
-        const video = videoRef.current;
-        if (!video) return;
-        video.volume = muted ? 0 : volume;
+        if (videoRef.current) videoRef.current.volume = muted ? 0 : volume;
     }, [volume, muted]);
 
-    // Sync store 'played' value to video.currentTime (External seek)
+    // Sync "played" store value to video.currentTime (External updates)
     useEffect(() => {
         const video = videoRef.current;
         if (!video || seeking || !videoUrl || !video.duration || isNaN(video.duration)) {
@@ -65,9 +94,9 @@ export const VideoPlayer: React.FC = React.memo(() => {
         }
 
         const storeTime = played * video.duration;
-        // Only seek if the difference is significant (> 0.1s)
-        if (Math.abs(video.currentTime - storeTime) > 0.15) {
-            console.log("External Seek Sync: video.currentTime =", storeTime);
+        // Only seek if the difference is significant (> 0.2s)
+        if (Math.abs(video.currentTime - storeTime) > 0.2) {
+            console.log("External Seek -> currentTime:", storeTime);
             video.currentTime = storeTime;
         }
     }, [played, seeking, videoUrl]);
@@ -75,21 +104,19 @@ export const VideoPlayer: React.FC = React.memo(() => {
     // Internal time update from video element
     const handleTimeUpdate = () => {
         const video = videoRef.current;
-        if (!video || seeking) return;
-        if (video.duration > 0) {
-            const newPlayed = video.currentTime / video.duration;
-            // Only update store if the difference is significant
-            if (Math.abs(played - newPlayed) > 0.001) {
-                setPlayed(newPlayed);
-            }
+        if (!video || seeking || video.duration <= 0) return;
+        const newPlayed = video.currentTime / video.duration;
+        // Only update store if the difference is significant
+        if (Math.abs(played - newPlayed) > 0.001) {
+            setPlayed(newPlayed);
         }
     };
 
     const handleLoadedMetadata = () => {
-        const video = videoRef.current;
-        if (!video) return;
-        console.log("Metadata loaded. Duration:", video.duration);
-        setDuration(video.duration);
+        if (videoRef.current) {
+            console.log("Metadata Load -> Duration:", videoRef.current.duration);
+            setDuration(videoRef.current.duration);
+        }
     };
 
     // Mouse wheel scrubbing
@@ -118,14 +145,23 @@ export const VideoPlayer: React.FC = React.memo(() => {
         return () => container.removeEventListener('wheel', handleWheel);
     }, [videoUrl, setIsPlaying, setPlayed]);
 
-    const handleSeekMouseDown = () => setSeeking(true);
-    const handleSeekMouseUp = () => setSeeking(false);
+    // Scrubber drag handlers
+    const handleSeekMouseDown = () => {
+        console.log("Scrubber drag start");
+        setSeeking(true);
+    };
+
+    const handleSeekMouseUp = () => {
+        console.log("Scrubber drag end");
+        setSeeking(false);
+    };
 
     const handleSeekChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const fraction = parseFloat(e.target.value);
         setPlayed(fraction);
         const video = videoRef.current;
         if (video && !isNaN(video.duration)) {
+            // Force immediate seek for real-time preview
             video.currentTime = fraction * video.duration;
         }
     };
@@ -161,22 +197,18 @@ export const VideoPlayer: React.FC = React.memo(() => {
 
     if (!videoUrl) return null;
 
-    const currentTime = played * duration;
-
     return (
         <div
             ref={containerRef}
             className="w-full h-full flex flex-col group relative rounded-2xl overflow-hidden bg-black ring-1 ring-white/5 shadow-2xl"
         >
-            <video
-                ref={videoRef}
+            <VideoElement
                 src={videoUrl}
-                className="w-full h-full object-contain flex-1 cursor-pointer"
+                videoRef={videoRef}
                 onTimeUpdate={handleTimeUpdate}
                 onLoadedMetadata={handleLoadedMetadata}
                 onEnded={() => setIsPlaying(false)}
                 onClick={() => setIsPlaying(!isPlaying)}
-                playsInline
             />
 
             <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/95 to-transparent px-4 pb-4 pt-12 opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-10 pointer-events-none">
@@ -241,13 +273,13 @@ export const VideoPlayer: React.FC = React.memo(() => {
                             </div>
 
                             <span className="text-xs text-neutral-300 font-mono tabular-nums">
-                                {formatTime(currentTime)} / {formatTime(duration)}
+                                {formatTime(played * duration)} / {formatTime(duration)}
                             </span>
                         </div>
 
                         <div className="flex items-center gap-3">
                             <button
-                                onClick={() => addBookmark(currentTime)}
+                                onClick={() => addBookmark(played * duration)}
                                 title="Add Bookmark (B)"
                                 className="flex items-center gap-1.5 text-xs text-neutral-300 hover:text-emerald-400 transition-colors focus:outline-none"
                             >

@@ -67,8 +67,8 @@ export const useAnalysis = () => {
             };
 
             for (let i = 0; i < totalChunks; i++) {
-                // Add a small breather for the main thread at the start of each chunk processing
-                await new Promise(resolve => setTimeout(resolve, 0));
+                // Yield to the main thread even more frequently for audio stability
+                await new Promise(resolve => setTimeout(resolve, 30));
 
                 // Update progress (Upload is first 50%)
                 setAnalysisProgress(Math.round(((i) / totalChunks) * 50));
@@ -76,10 +76,12 @@ export const useAnalysis = () => {
                 const start = i * CHUNK_SIZE;
                 const end = Math.min(start + CHUNK_SIZE, file.size);
                 const chunk = file.slice(start, end);
+
+                // Base64 conversion
                 const base64Data = await blobToBase64(chunk);
 
-                // Add a small breather for the main thread
-                await new Promise(resolve => setTimeout(resolve, 0));
+                // Give the browser another chance to process events/audio
+                await new Promise(resolve => setTimeout(resolve, 10));
 
                 const uploadResponse = await fetch(`${baseUrl}/api/upload-chunk`, {
                     method: 'POST',
