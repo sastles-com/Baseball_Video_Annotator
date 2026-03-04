@@ -53,14 +53,17 @@ export const useAnalysis = () => {
             const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
             const sessionId = crypto.randomUUID ? crypto.randomUUID() : Date.now().toString() + Math.random().toString(36).substring(7);
 
-            // Helper: convert ArrayBuffer to Base64 string
-            const arrayBufferToBase64 = (buffer: ArrayBuffer): string => {
-                const bytes = new Uint8Array(buffer);
-                let binary = '';
-                for (let i = 0; i < bytes.byteLength; i++) {
-                    binary += String.fromCharCode(bytes[i]);
-                }
-                return btoa(binary);
+            // Helper: convert Blob/File chunk to Base64 string asynchronously
+            const blobToBase64 = (blob: Blob): Promise<string> => {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                        const base64 = (reader.result as string).split(',')[1];
+                        resolve(base64);
+                    };
+                    reader.onerror = reject;
+                    reader.readAsDataURL(blob);
+                });
             };
 
             for (let i = 0; i < totalChunks; i++) {
@@ -70,8 +73,7 @@ export const useAnalysis = () => {
                 const start = i * CHUNK_SIZE;
                 const end = Math.min(start + CHUNK_SIZE, file.size);
                 const chunk = file.slice(start, end);
-                const chunkBuffer = await chunk.arrayBuffer();
-                const base64Data = arrayBufferToBase64(chunkBuffer);
+                const base64Data = await blobToBase64(chunk);
 
                 const uploadResponse = await fetch(`${baseUrl}/api/upload-chunk`, {
                     method: 'POST',

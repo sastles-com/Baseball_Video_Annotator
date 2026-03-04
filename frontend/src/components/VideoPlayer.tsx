@@ -39,11 +39,17 @@ export const VideoPlayer: React.FC = () => {
     // Sync played fraction back to video (handles external seeks like hotkeys)
     useEffect(() => {
         const video = videoRef.current;
-        if (!video || seeking || !videoUrl) return;
+        if (!video || seeking || !videoUrl || !video.duration || isNaN(video.duration)) {
+            if (video && isNaN(video.duration) && videoUrl) {
+                console.log("Video duration is NaN, skipping sync");
+            }
+            return;
+        }
 
-        const storeTime = played * (video.duration || 0);
+        const storeTime = played * video.duration;
         // Only seek if the difference is significant (> 0.1s)
         if (Math.abs(video.currentTime - storeTime) > 0.1) {
+            console.log("Syncing video time to storeTime:", storeTime, "current:", video.currentTime);
             video.currentTime = storeTime;
         }
     }, [played, seeking, videoUrl]);
@@ -60,8 +66,13 @@ export const VideoPlayer: React.FC = () => {
     const handleLoadedMetadata = useCallback(() => {
         const video = videoRef.current;
         if (!video) return;
+        console.log("Video Metadata Loaded: duration =", video.duration);
         setDuration(video.duration);
     }, [setDuration]);
+
+    useEffect(() => {
+        console.log("VideoPlayer mounted with videoUrl:", videoUrl ? "Present" : "Empty");
+    }, [videoUrl]);
 
     // Mouse wheel scrubbing — step 1 frame (1/30s)
     useEffect(() => {
