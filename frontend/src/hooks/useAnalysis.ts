@@ -121,7 +121,8 @@ export const useAnalysis = () => {
                         } else if (data.type === 'result') {
                             console.log("SUCCESS: Received final result!", data);
                             const store = useAnnotationStore.getState();
-                            data.bookmarks.forEach((b: any) => store.addBookmark(b.time));
+                            const { duration } = useVideoStore.getState();
+                            store.setBookmarksAndChunks(data.bookmarks, duration);
                             setAnalysisProgress(100);
                         } else if (data.type === 'error') {
                             console.error("Analysis backend error:", data.message);

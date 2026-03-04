@@ -190,11 +190,9 @@ function App() {
 
   const processFile = (file: File) => {
     if (file) {
-      console.log("App: Processing file locally:", file.name, "Size:", file.size);
       useAnnotationStore.setState({ bookmarks: [], chunks: [] });
       setCurrentFile(file);
       const url = URL.createObjectURL(file);
-      console.log("App: Created Local Blob URL:", url);
       setVideoUrl(url);
       setIsPlaying(false);
       detectCuts(file);

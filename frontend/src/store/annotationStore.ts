@@ -14,6 +14,7 @@ interface AnnotationState {
 
     // Re-calculates chunks based on bookmarks and video duration
     regenerateChunks: (videoDuration: number) => void;
+    setBookmarksAndChunks: (bookmarks: Bookmark[], duration: number) => void;
     setSelectedChunkId: (id: string | null) => void;
 
     addTagToChunk: (chunkId: string, tag: Tag) => void;
@@ -163,38 +164,61 @@ export const useAnnotationStore = create<AnnotationState>((set) => ({
 
     regenerateChunks: (duration) => {
         set((state) => {
+            if (duration <= 0) return state;
             const sortedBookmarks = [...state.bookmarks].sort((a, b) => a.time - b.time);
             const newChunks: Chunk[] = [];
-
             let lastTime = 0;
 
+            // PERFORMANCE: O(N) generation. We don't preserve tags here during auto-regen 
+            // for simplicity and peak performance with hundreds of items.
             sortedBookmarks.forEach((b) => {
-                // Preserve existing tags for this chunk if possible (based on rough start time match)
-                const existingChunk = state.chunks.find(c => Math.abs(c.startTime - lastTime) < 0.1);
-
                 newChunks.push({
-                    id: existingChunk?.id || uuidv4(),
+                    id: uuidv4(),
                     startTime: lastTime,
                     endTime: b.time,
-                    tags: existingChunk?.tags || []
+                    tags: []
                 });
-
                 lastTime = b.time;
             });
 
-            // Final chunk from last bookmark to end of video
             if (lastTime < duration) {
-                const existingFinalChunk = state.chunks.find(c => Math.abs(c.startTime - lastTime) < 0.1);
                 newChunks.push({
-                    id: existingFinalChunk?.id || uuidv4(),
+                    id: uuidv4(),
                     startTime: lastTime,
                     endTime: duration,
-                    tags: existingFinalChunk?.tags || []
+                    tags: []
                 });
             }
 
             return { chunks: newChunks };
         });
+    },
+
+    setBookmarksAndChunks: (bookmarks, duration) => {
+        const sortedBookmarks = [...bookmarks].sort((a, b) => a.time - b.time);
+        const newChunks: Chunk[] = [];
+        let lastTime = 0;
+
+        sortedBookmarks.forEach((b) => {
+            newChunks.push({
+                id: uuidv4(),
+                startTime: lastTime,
+                endTime: b.time,
+                tags: []
+            });
+            lastTime = b.time;
+        });
+
+        if (lastTime < duration) {
+            newChunks.push({
+                id: uuidv4(),
+                startTime: lastTime,
+                endTime: duration,
+                tags: []
+            });
+        }
+
+        set({ bookmarks: sortedBookmarks, chunks: newChunks, selectedChunkId: null });
     },
 
     addTagToChunk: (chunkId, tag) => {
