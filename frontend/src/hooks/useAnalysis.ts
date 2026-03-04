@@ -67,6 +67,9 @@ export const useAnalysis = () => {
             };
 
             for (let i = 0; i < totalChunks; i++) {
+                // Add a small breather for the main thread at the start of each chunk processing
+                await new Promise(resolve => setTimeout(resolve, 0));
+
                 // Update progress (Upload is first 50%)
                 setAnalysisProgress(Math.round(((i) / totalChunks) * 50));
 
@@ -74,6 +77,9 @@ export const useAnalysis = () => {
                 const end = Math.min(start + CHUNK_SIZE, file.size);
                 const chunk = file.slice(start, end);
                 const base64Data = await blobToBase64(chunk);
+
+                // Add a small breather for the main thread
+                await new Promise(resolve => setTimeout(resolve, 0));
 
                 const uploadResponse = await fetch(`${baseUrl}/api/upload-chunk`, {
                     method: 'POST',
@@ -125,7 +131,6 @@ export const useAnalysis = () => {
                     if (!line.trim()) continue;
                     try {
                         const data = JSON.parse(line);
-                        // console.log("Received analysis data:", data); // Too noisy for progress
                         if (data.type === 'progress') {
                             // Map 0-100 analysis progress to 50-100 overall progress
                             setAnalysisProgress(50 + Math.round(data.value / 2));
@@ -140,23 +145,18 @@ export const useAnalysis = () => {
                         }
                     } catch (e) {
                         console.error("JSON parse error on line:", line);
-                        console.error("Parse exception:", e);
                     }
                 }
             }
-            // Check if there's anything left in the buffer after the stream ends
             if (buffer.trim()) {
                 try {
                     const data = JSON.parse(buffer);
                     if (data.type === 'result') {
-                        console.log("SUCCESS: Received final result from remaining buffer!", data);
                         const store = useAnnotationStore.getState();
                         data.bookmarks.forEach((b: any) => store.addBookmark(b.time));
                         setAnalysisProgress(100);
                     }
-                } catch (e) {
-                    console.error("JSON parse error on final buffer:", buffer);
-                }
+                } catch (e) { }
             }
         } catch (err) {
             console.error("Auto-detect failed:", err);

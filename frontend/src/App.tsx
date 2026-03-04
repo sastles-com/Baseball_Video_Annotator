@@ -15,11 +15,21 @@ import { useHotkeys } from 'react-hotkeys-hook';
 import { useAnalysis } from './hooks/useAnalysis';
 
 function App() {
-  const {
-    videoUrl, setVideoUrl, isPlaying, setIsPlaying, played, duration, setPlayed,
-    isAnalyzing, analysisProgress, detectionThreshold,
-    setCurrentFile, backendStatus, backendUrl
-  } = useVideoStore();
+  // Select only needed state separately to avoid unnecessary re-renders of the whole App
+  const videoUrl = useVideoStore(state => state.videoUrl);
+  const setVideoUrl = useVideoStore(state => state.setVideoUrl);
+  const isPlaying = useVideoStore(state => state.isPlaying);
+  const setIsPlaying = useVideoStore(state => state.setIsPlaying);
+  const played = useVideoStore(state => state.played);
+  const setPlayed = useVideoStore(state => state.setPlayed);
+  const duration = useVideoStore(state => state.duration);
+  const isAnalyzing = useVideoStore(state => state.isAnalyzing);
+  const analysisProgress = useVideoStore(state => state.analysisProgress);
+  const detectionThreshold = useVideoStore(state => state.detectionThreshold);
+  const setCurrentFile = useVideoStore(state => state.setCurrentFile);
+  const backendStatus = useVideoStore(state => state.backendStatus);
+  const backendUrl = useVideoStore(state => state.backendUrl);
+
   const { addBookmark, initializePresets } = useAnnotationStore();
   const { openMenu } = useContextMenuStore();
   const { openSettings } = useUIStore();
@@ -36,18 +46,18 @@ function App() {
     return () => clearInterval(interval);
   }, [initializePresets, checkBackendHealth]);
 
-  // Keyboard Shortcuts
+  // Keyboard Shortcuts (use memoized versions)
   useHotkeys('space', (e) => {
     e.preventDefault();
     if (videoUrl) setIsPlaying(!isPlaying);
-  }, [isPlaying, videoUrl]);
+  }, [isPlaying, videoUrl, setIsPlaying]);
 
   useHotkeys('b', (e) => {
     e.preventDefault();
     if (videoUrl && duration > 0) {
       addBookmark(played * duration);
     }
-  }, [played, duration, videoUrl]);
+  }, [played, duration, videoUrl, addBookmark]);
 
   useHotkeys('shift+b', (e) => {
     e.preventDefault();
@@ -116,6 +126,7 @@ function App() {
 
   const processFile = (file: File) => {
     if (file) {
+      console.log("Processing new file:", file.name);
       useAnnotationStore.setState({ bookmarks: [], chunks: [] });
       setCurrentFile(file);
       setVideoUrl(URL.createObjectURL(file));
@@ -183,13 +194,13 @@ function App() {
             </h1>
             <div className="flex items-center gap-2 mt-0.5">
               <div className={`w-1.5 h-1.5 rounded-full ${backendStatus === 'online' ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)]' :
-                  backendStatus === 'offline' ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.8)]' :
-                    'bg-neutral-500'
+                backendStatus === 'offline' ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.8)]' :
+                  'bg-neutral-500'
                 }`}
               />
               <span className={`text-[10px] uppercase tracking-wider font-bold ${backendStatus === 'online' ? 'text-emerald-500/80' :
-                  backendStatus === 'offline' ? 'text-red-500/80' :
-                    'text-neutral-500'
+                backendStatus === 'offline' ? 'text-red-500/80' :
+                  'text-neutral-500'
                 }`}>
                 Backend {backendStatus}
               </span>
@@ -245,11 +256,11 @@ function App() {
             )}
 
             {isAnalyzing && (
-              <div className="absolute inset-x-0 bottom-8 flex justify-center z-20 pointer-events-none">
+              <div className="absolute inset-x-0 top-12 flex justify-center z-20 pointer-events-none">
                 <div className="bg-neutral-900/90 backdrop-blur-md border border-neutral-700 rounded-2xl p-4 shadow-2xl flex flex-col items-center gap-3 w-72 pointer-events-auto scale-in duration-300">
                   <div className="flex items-center gap-2 text-emerald-400 text-sm font-semibold">
                     <RefreshCw size={16} className="animate-spin" />
-                    Analyzing cuts ({analysisProgress}%)...
+                    {analysisProgress < 50 ? 'Uploading Video...' : 'Detecting Cuts...'} ({analysisProgress}%)
                   </div>
                   <div className="w-full h-1.5 bg-neutral-800 rounded-full overflow-hidden border border-neutral-700">
                     <div
