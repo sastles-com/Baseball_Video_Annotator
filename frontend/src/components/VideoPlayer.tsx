@@ -35,6 +35,23 @@ export const VideoPlayer: React.FC = React.memo(() => {
     const [seeking, setSeeking] = useState(false);
     const [muted, setMuted] = useState(false);
     const [isBuffering, setIsBuffering] = useState(false);
+    const bufferingTimeoutRef = useRef<number | null>(null);
+
+    const clearBuffering = useCallback(() => {
+        if (bufferingTimeoutRef.current) {
+            window.clearTimeout(bufferingTimeoutRef.current);
+            bufferingTimeoutRef.current = null;
+        }
+        setIsBuffering(false);
+    }, []);
+
+    const startBuffering = useCallback(() => {
+        if (bufferingTimeoutRef.current) return;
+        // Only show spinner if waiting for more than 500ms
+        bufferingTimeoutRef.current = window.setTimeout(() => {
+            setIsBuffering(true);
+        }, 500);
+    }, []);
 
     // --- 1. Play/Pause Sync ---
     useEffect(() => {
@@ -78,6 +95,10 @@ export const VideoPlayer: React.FC = React.memo(() => {
     const handleTimeUpdate = () => {
         const video = videoRef.current;
         if (!video || seeking || video.duration <= 0) return;
+
+        // If time is moving, we are definitely not buffering
+        if (isBuffering || bufferingTimeoutRef.current) clearBuffering();
+
         setPlayed(video.currentTime / video.duration);
     };
 
@@ -167,11 +188,12 @@ export const VideoPlayer: React.FC = React.memo(() => {
                 className="w-full h-full object-contain flex-1 cursor-pointer"
                 onTimeUpdate={handleTimeUpdate}
                 onLoadedMetadata={handleLoadedMetadata}
-                onWaiting={() => setIsBuffering(true)}
-                onPlaying={() => setIsBuffering(false)}
-                onSeeked={() => setIsBuffering(false)}
-                onCanPlay={() => setIsBuffering(false)}
-                onEnded={() => setIsPlaying(false)}
+                onWaiting={startBuffering}
+                onPlaying={clearBuffering}
+                onSeeked={clearBuffering}
+                onCanPlay={clearBuffering}
+                onSuspend={clearBuffering}
+                onEnded={() => { setIsPlaying(false); clearBuffering(); }}
                 onClick={() => setIsPlaying(!isPlaying)}
                 playsInline
                 preload="auto"
