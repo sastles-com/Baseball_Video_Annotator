@@ -1,118 +1,46 @@
-import React, { useEffect, useRef, useMemo } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { useVideoStore } from '../store/videoStore';
 import { useAnnotationStore } from '../store/annotationStore';
 import { Bookmark as BookmarkIcon } from 'lucide-react';
 
 const WINDOW_SIZE = 60; // seconds for detailed view
 
-// --- HIGH PERFORMANCE Playhead Component ---
-// Separated to prevent top-level re-render loops on every time update.
-const Playhead = ({ isOverview, duration }: { isOverview: boolean, duration: number }) => {
-    const played = useVideoStore(state => state.played);
-    const currentTime = played * duration;
-    const windowStart = Math.max(0, Math.min(duration - WINDOW_SIZE, currentTime - WINDOW_SIZE / 2));
-
-    const left = isOverview
-        ? `${played * 100}%`
-        : `${((currentTime - windowStart) / WINDOW_SIZE) * 100}%`;
-
-    return (
-        <div
-            className={`absolute top-0 bottom-0 ${isOverview ? "w-0.5" : "w-1"} bg-emerald-400 pointer-events-none z-30 ${isOverview ? "" : "shadow-[0_0_15px_rgba(52,211,153,0.6)]"}`}
-            style={{ left }}
-        >
-            {!isOverview && (
-                <div className="absolute top-0 left-1/2 -translate-x-1/2 w-3 h-3 bg-emerald-400 rounded-full shadow-lg" />
-            )}
-        </div>
-    );
-};
-
-// --- Memoized Overlays for Performance ---
-const OverviewGrid = React.memo(({ duration, chunks, bookmarks }: { duration: number, chunks: any[], bookmarks: any[] }) => (
-    <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute inset-0 flex w-full h-full opacity-10">
-            {chunks.map((chunk, index) => (
-                <div
-                    key={chunk.id}
-                    className={`h-full ${index % 2 === 0 ? 'bg-blue-400/30' : 'bg-emerald-400/20'}`}
-                    style={{ width: `${((chunk.endTime - chunk.startTime) / (duration || 1)) * 100}%` }}
-                />
-            ))}
-        </div>
-        {bookmarks.map(b => (
-            <div
-                key={b.id}
-                className="absolute top-0 bottom-0 w-px bg-red-400/40"
-                style={{ left: `${(b.time / (duration || 1)) * 100}%` }}
-            />
-        ))}
-    </div>
-));
-
-const DetailTicks = React.memo(({ windowStart, duration }: { windowStart: number, duration: number }) => (
-    <div className="absolute inset-0 pointer-events-none opacity-20">
-        {Array.from({ length: WINDOW_SIZE + 1 }).map((_, i) => {
-            const time = Math.floor(windowStart) + i;
-            if (time > duration) return null;
-            const left = ((time - windowStart) / WINDOW_SIZE) * 100;
-            return (
-                <div
-                    key={i}
-                    className={`absolute top-0 bottom-0 w-px ${time % 10 === 0 ? 'bg-white/50 h-full' : (time % 5 === 0 ? 'bg-white/30 h-1/2' : 'bg-white/10 h-1/4')}`}
-                    style={{ left: `${left}%` }}
-                >
-                    {time % 10 === 0 && (
-                        <span className="absolute bottom-0 left-1 text-[8px] text-neutral-500">
-                            {Math.floor(time / 60)}:{(time % 60).toString().padStart(2, '0')}
-                        </span>
-                    )}
-                </div>
-            );
-        })}
-    </div>
-));
-
 export const Timeline: React.FC = () => {
-    const { duration, played, setPlayed, triggerSeek } = useVideoStore();
+    const { duration, played, setPlayed } = useVideoStore();
     const { bookmarks, addBookmark, removeBookmark, regenerateChunks, chunks, selectedChunkId } = useAnnotationStore();
-
     const overviewRef = useRef<HTMLDivElement>(null);
     const detailRef = useRef<HTMLDivElement>(null);
 
+    // Recalculate chunks when bookmarks change
     useEffect(() => {
-        if (duration > 0) regenerateChunks(duration);
+        if (duration > 0) {
+            regenerateChunks(duration);
+        }
     }, [bookmarks, duration, regenerateChunks]);
-
-    const currentTime = played * duration;
-    const windowStart = Math.max(0, Math.min(duration - WINDOW_SIZE, currentTime - WINDOW_SIZE / 2));
-    const windowEnd = windowStart + WINDOW_SIZE;
 
     const handleOverviewClick = (e: React.MouseEvent<HTMLDivElement>) => {
         if (!overviewRef.current || duration === 0) return;
         const rect = overviewRef.current.getBoundingClientRect();
         const x = e.clientX - rect.left;
-        setPlayed(Math.max(0, Math.min(1, x / rect.width)));
+        const percentage = Math.max(0, Math.min(1, x / rect.width));
+        setPlayed(percentage);
     };
 
     const handleDetailClick = (e: React.MouseEvent<HTMLDivElement>) => {
         if (!detailRef.current || duration === 0) return;
         const rect = detailRef.current.getBoundingClientRect();
         const x = e.clientX - rect.left;
+        const currentTime = played * duration;
+        const windowStart = Math.max(0, Math.min(duration - WINDOW_SIZE, currentTime - WINDOW_SIZE / 2));
         const clickTime = windowStart + (x / rect.width) * WINDOW_SIZE;
         setPlayed(Math.max(0, Math.min(duration, clickTime)) / duration);
     };
 
-    // Optimization: Pre-filter items for Zoomed view (The "Master" optimization)
-    const visibleBookmarks = useMemo(() =>
-        bookmarks.filter(b => b.time >= windowStart - 5 && b.time <= windowEnd + 5),
-        [bookmarks, windowStart, windowEnd]
-    );
-
-    const visibleChunks = useMemo(() =>
-        chunks.filter(c => c.endTime >= windowStart && c.startTime <= windowEnd),
-        [chunks, windowStart, windowEnd]
-    );
+    const handleAddBookmark = () => {
+        if (duration === 0) return;
+        const currentTime = played * duration;
+        addBookmark(currentTime);
+    };
 
     const formatTime = (seconds: number) => {
         const m = Math.floor(seconds / 60);
@@ -122,69 +50,167 @@ export const Timeline: React.FC = () => {
 
     if (duration === 0) return null;
 
+    const currentTime = played * duration;
+    const windowStart = Math.max(0, Math.min(duration - WINDOW_SIZE, currentTime - WINDOW_SIZE / 2));
+    const windowEnd = windowStart + WINDOW_SIZE;
+
     return (
-        <div className="p-4 bg-neutral-900/80 border border-neutral-800 rounded-2xl shadow-xl backdrop-blur-sm flex flex-col gap-3 h-full overflow-hidden">
-            <div className="flex justify-between items-center shrink-0 px-1">
-                <h3 className="text-xs font-semibold text-neutral-300 flex items-center gap-2">
-                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-500"></div> TIMELINE
+        <div className="p-4 bg-neutral-900/80 border border-neutral-800 rounded-2xl shadow-xl backdrop-blur-sm flex flex-col gap-3">
+            <div className="flex justify-between items-center mb-1">
+                <h3 className="text-sm font-semibold text-neutral-200 flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-emerald-500"></div> Timeline Control
                 </h3>
-                <div className="text-[10px] font-mono text-neutral-400 bg-black/40 px-2 py-0.5 rounded border border-neutral-800">
-                    {formatTime(currentTime)} / {formatTime(duration)}
+                <div className="flex items-center gap-3">
+                    <div className="text-xs font-mono text-neutral-400">
+                        {formatTime(currentTime)} / {formatTime(duration)}
+                    </div>
                 </div>
             </div>
 
-            <div className="flex-1 flex flex-col gap-3 min-h-0">
-                {/* Overview Timeline */}
-                <div className="relative h-6 bg-neutral-950 rounded-lg border border-neutral-800 cursor-crosshair overflow-hidden shrink-0"
-                    ref={overviewRef} onClick={handleOverviewClick}>
-                    <OverviewGrid duration={duration} chunks={chunks} bookmarks={bookmarks} />
-                    <div className="absolute top-0 bottom-0 border border-white/20 bg-white/5 pointer-events-none z-10"
-                        style={{ left: `${(windowStart / duration) * 100}%`, width: `${(WINDOW_SIZE / duration) * 100}%` }} />
-                    <Playhead isOverview={true} duration={duration} />
+            {/* Overview Timeline (Mini) */}
+            <div className="space-y-1">
+                <div className="flex justify-between text-[10px] text-neutral-500 px-1">
+                    <span>Overview (Full Video)</span>
                 </div>
+                <div
+                    className="relative h-6 bg-neutral-950 rounded-lg border border-neutral-800 cursor-crosshair overflow-hidden"
+                    ref={overviewRef}
+                    onClick={handleOverviewClick}
+                >
+                    {/* Chunks */}
+                    <div className="absolute inset-0 flex w-full h-full opacity-20">
+                        {chunks.map((chunk, index) => (
+                            <div
+                                key={chunk.id}
+                                className={`h-full border-r border-neutral-800/50 ${index % 2 === 0 ? 'bg-blue-900/40' : 'bg-emerald-900/30'}`}
+                                style={{ width: `${((chunk.endTime - chunk.startTime) / duration) * 100}%` }}
+                            />
+                        ))}
+                    </div>
+                    {/* Bookmarks in Overview */}
+                    {bookmarks.map(b => (
+                        <div
+                            key={b.id}
+                            className="absolute top-0 bottom-0 w-px bg-red-500/50 z-20"
+                            style={{ left: `${(b.time / duration) * 100}%` }}
+                        />
+                    ))}
+                    {/* Window Indicator */}
+                    <div
+                        className="absolute top-0 bottom-0 border border-white/20 bg-white/5 pointer-events-none z-10"
+                        style={{
+                            left: `${(windowStart / duration) * 100}%`,
+                            width: `${(WINDOW_SIZE / duration) * 100}%`
+                        }}
+                    />
+                    {/* Playhead */}
+                    <div
+                        className="absolute top-0 bottom-0 w-0.5 bg-emerald-400 pointer-events-none z-30"
+                        style={{ left: `${played * 100}%` }}
+                    />
+                </div>
+            </div>
 
-                {/* Detailed Timeline */}
-                <div className="relative flex-1 bg-neutral-950 rounded-xl border border-neutral-800 cursor-crosshair overflow-hidden group/detail"
-                    ref={detailRef} onClick={handleDetailClick}>
-                    <DetailTicks windowStart={windowStart} duration={duration} />
+            {/* Detailed Timeline (Zoomed) */}
+            <div className="space-y-1">
+                <div className="flex justify-between text-[10px] text-neutral-500 px-1">
+                    <span>Detail View ({WINDOW_SIZE}s window)</span>
+                    <button
+                        onClick={handleAddBookmark}
+                        className="flex items-center gap-1 text-[10px] bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-400 px-2 py-0.5 rounded transition-colors border border-emerald-500/20"
+                    >
+                        <BookmarkIcon size={10} /> Add Bookmark
+                    </button>
+                </div>
+                <div
+                    className="relative h-20 bg-neutral-950 rounded-xl border border-neutral-800 cursor-crosshair overflow-hidden group/detail"
+                    ref={detailRef}
+                    onClick={handleDetailClick}
+                >
+                    {/* Detail Grid */}
+                    <div className="absolute inset-0 pointer-events-none opacity-20">
+                        {Array.from({ length: WINDOW_SIZE + 1 }).map((_, i) => {
+                            const time = Math.floor(windowStart) + i;
+                            if (time > duration) return null;
+                            const left = ((time - windowStart) / WINDOW_SIZE) * 100;
+                            return (
+                                <div
+                                    key={i}
+                                    className={`absolute top-0 bottom-0 w-px ${time % 10 === 0 ? 'bg-white/50 h-full' : (time % 5 === 0 ? 'bg-white/30 h-1/2' : 'bg-white/10 h-1/4')}`}
+                                    style={{ left: `${left}%` }}
+                                >
+                                    {time % 10 === 0 && (
+                                        <span className="absolute bottom-0 left-1 text-[8px] text-neutral-500">
+                                            {formatTime(time)}
+                                        </span>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
 
-                    <div className="absolute inset-0 flex h-full pointer-events-none">
-                        {visibleChunks.map((chunk, index) => {
+                    {/* Chunks background visualization */}
+                    <div className="absolute inset-0 flex h-full">
+                        {chunks.map((chunk, index) => {
+                            if (chunk.endTime < windowStart || chunk.startTime > windowEnd) return null;
                             const start = Math.max(windowStart, chunk.startTime);
                             const end = Math.min(windowEnd, chunk.endTime);
                             const widthPct = ((end - start) / WINDOW_SIZE) * 100;
                             const leftPct = ((start - windowStart) / WINDOW_SIZE) * 100;
+                            const isAlternate = index % 2 === 0;
                             const isSelected = selectedChunkId === chunk.id;
+
                             return (
                                 <div
                                     key={chunk.id}
-                                    className={`absolute top-0 bottom-0 border-x ${isSelected ? 'bg-emerald-500/20 border-emerald-400/40 z-10' : `border-white/5 ${index % 2 === 0 ? 'bg-blue-400/5' : 'bg-emerald-400/5'}`}`}
-                                    style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                                    className={`absolute top-0 bottom-0 border-x transition-all duration-300
+                                        ${isSelected
+                                            ? 'bg-emerald-500/30 border-emerald-400/50 z-10 shadow-[inset_0_0_20px_rgba(16,185,129,0.1)]'
+                                            : `border-neutral-800/30 ${isAlternate ? 'bg-blue-900/20' : 'bg-emerald-900/10'}`}`}
+                                    style={{
+                                        left: `${leftPct}%`,
+                                        width: `${widthPct}%`
+                                    }}
                                 />
                             );
                         })}
                     </div>
 
-                    {visibleBookmarks.map(b => (
-                        <div
-                            key={b.id}
-                            className="absolute top-0 bottom-0 w-px bg-red-500/80 z-30 group"
-                            style={{ left: `${((b.time - windowStart) / WINDOW_SIZE) * 100}%` }}
-                            onClick={(e) => { e.stopPropagation(); triggerSeek(b.time); }}
-                        >
-                            <div className="absolute -top-1 -left-1.5 w-3 h-3 bg-red-500 rounded-sm rotate-45 transform hover:scale-125 transition-transform cursor-pointer"
-                                onClick={(e) => { e.stopPropagation(); removeBookmark(b.id); }} />
-                        </div>
-                    ))}
-
-                    <Playhead isOverview={false} duration={duration} />
-
-                    <button
-                        onClick={(e) => { e.stopPropagation(); addBookmark(currentTime); }}
-                        className="absolute top-2 right-2 flex items-center gap-1 text-[10px] bg-emerald-600 hover:bg-emerald-500 text-white px-2 py-1 rounded shadow-lg opacity-0 group-hover/detail:opacity-100 transition-opacity z-40"
+                    {/* Detailed Playhead (Centered typically) */}
+                    <div
+                        className="absolute top-0 bottom-0 w-1 bg-emerald-400 pointer-events-none shadow-[0_0_15px_rgba(52,211,153,0.6)] z-20"
+                        style={{ left: `${((currentTime - windowStart) / WINDOW_SIZE) * 100}%` }}
                     >
-                        <BookmarkIcon size={12} /> 栞を追加
-                    </button>
+                        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-3 h-3 bg-emerald-400 rounded-full shadow-lg" />
+                    </div>
+
+                    {/* Bookmarks in Detail view */}
+                    {bookmarks.map(b => {
+                        if (b.time < windowStart || b.time > windowEnd) return null;
+                        const leftPct = ((b.time - windowStart) / WINDOW_SIZE) * 100;
+                        return (
+                            <div
+                                key={b.id}
+                                className="absolute top-0 bottom-0 w-px bg-red-500/80 z-30 group"
+                                style={{ left: `${leftPct}%` }}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    setPlayed(b.time / duration);
+                                }}
+                            >
+                                <div className="absolute -top-1 -left-1.5 w-3 h-3 bg-red-500 rounded-sm rotate-45 transform hover:scale-125 transition-transform cursor-pointer"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        removeBookmark(b.id);
+                                    }}
+                                    title="Remove Bookmark"
+                                />
+                                <div className="absolute bottom-1 left-1 text-[8px] text-red-400 font-mono opacity-0 group-hover:opacity-100 transition-opacity">
+                                    {formatTime(b.time)}
+                                </div>
+                            </div>
+                        );
+                    })}
                 </div>
             </div>
         </div>
