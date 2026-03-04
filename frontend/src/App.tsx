@@ -18,17 +18,23 @@ function App() {
   const {
     videoUrl, setVideoUrl, isPlaying, setIsPlaying, played, duration, setPlayed,
     isAnalyzing, analysisProgress, detectionThreshold,
-    setCurrentFile
+    setCurrentFile, backendStatus, backendUrl
   } = useVideoStore();
   const { addBookmark, initializePresets } = useAnnotationStore();
   const { openMenu } = useContextMenuStore();
   const { openSettings } = useUIStore();
   const [isDragOver, setIsDragOver] = useState(false);
-  const { detectCuts } = useAnalysis();
+  const { detectCuts, checkBackendHealth } = useAnalysis();
 
   useEffect(() => {
     initializePresets();
-  }, [initializePresets]);
+    // initial check
+    checkBackendHealth();
+
+    // periodic check every 30s
+    const interval = setInterval(checkBackendHealth, 30000);
+    return () => clearInterval(interval);
+  }, [initializePresets, checkBackendHealth]);
 
   // Keyboard Shortcuts
   useHotkeys('space', (e) => {
@@ -171,9 +177,31 @@ function App() {
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-500 to-blue-600 flex items-center justify-center shadow-lg">
             <Scissors size={18} className="text-white" />
           </div>
-          <h1 className="text-xl font-bold bg-gradient-to-r from-emerald-400 to-blue-500 bg-clip-text text-transparent tracking-tight">
-            Baseball Video Annotator
-          </h1>
+          <div>
+            <h1 className="text-xl font-bold bg-gradient-to-r from-emerald-400 to-blue-500 bg-clip-text text-transparent tracking-tight">
+              Baseball Video Annotator
+            </h1>
+            <div className="flex items-center gap-2 mt-0.5">
+              <div className={`w-1.5 h-1.5 rounded-full ${backendStatus === 'online' ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)]' :
+                  backendStatus === 'offline' ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.8)]' :
+                    'bg-neutral-500'
+                }`}
+              />
+              <span className={`text-[10px] uppercase tracking-wider font-bold ${backendStatus === 'online' ? 'text-emerald-500/80' :
+                  backendStatus === 'offline' ? 'text-red-500/80' :
+                    'text-neutral-500'
+                }`}>
+                Backend {backendStatus}
+              </span>
+              <button
+                onClick={() => checkBackendHealth()}
+                className="text-[10px] text-neutral-500 hover:text-neutral-300 ml-1 underline decoration-dotted underline-offset-2 transition-colors"
+                title={`API: ${backendUrl}`}
+              >
+                再試行
+              </button>
+            </div>
+          </div>
         </div>
         <div className="flex items-center gap-3">
           <ImportButton />

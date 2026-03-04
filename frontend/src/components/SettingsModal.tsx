@@ -7,7 +7,10 @@ import { useAnalysis } from '../hooks/useAnalysis';
 
 export const SettingsModal: React.FC = () => {
     const { isSettingsOpen, closeSettings } = useUIStore();
-    const { detectionThreshold, setDetectionThreshold, isAnalyzing, currentFile } = useVideoStore();
+    const {
+        detectionThreshold, setDetectionThreshold, isAnalyzing, currentFile,
+        backendUrl, setBackendUrl, backendStatus, checkBackendStatus
+    } = useVideoStore();
     const {
         tagPresets, addCategory, removeCategory, addPresetTag, removePresetTag, importTagPresets
     } = useAnnotationStore();
@@ -83,7 +86,48 @@ export const SettingsModal: React.FC = () => {
                         <h3 className="text-sm font-semibold text-neutral-400 uppercase tracking-wider flex items-center gap-2">
                             <RefreshCw size={14} /> 自動検出設定
                         </h3>
+
                         <div className="bg-neutral-800/30 border border-neutral-800 rounded-xl p-5 space-y-4">
+                            {/* Backend URL Setting */}
+                            <div className="space-y-2">
+                                <label className="text-sm text-neutral-300 flex justify-between items-center">
+                                    <span>通信先バックエンドURL (API)</span>
+                                    <div className="flex items-center gap-2">
+                                        <div className={`w-2 h-2 rounded-full ${backendStatus === 'online' ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' :
+                                            backendStatus === 'offline' ? 'bg-red-500' : 'bg-neutral-500 animate-pulse'
+                                            }`} />
+                                        <span className={`text-[10px] font-medium ${backendStatus === 'online' ? 'text-emerald-400' :
+                                            backendStatus === 'offline' ? 'text-red-400' : 'text-neutral-500'
+                                            }`}>
+                                            {backendStatus === 'online' ? 'ONLINE' :
+                                                backendStatus === 'offline' ? 'OFFLINE' : 'CHECKING...'}
+                                        </span>
+                                        <button
+                                            onClick={() => checkBackendStatus()}
+                                            className="p-1 hover:bg-neutral-800 rounded transition-colors text-neutral-400"
+                                            title="再チェック"
+                                        >
+                                            <RefreshCw size={12} className={backendStatus === 'checking' ? 'animate-spin' : ''} />
+                                        </button>
+                                    </div>
+                                </label>
+                                <div className="flex gap-2">
+                                    <input
+                                        type="text"
+                                        value={backendUrl}
+                                        onChange={(e) => setBackendUrl(e.target.value)}
+                                        onBlur={() => checkBackendStatus()}
+                                        placeholder="http://localhost:8000"
+                                        className="flex-1 bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:ring-1 focus:ring-violet-500 transition-all font-mono"
+                                    />
+                                </div>
+                                <p className="text-[10px] text-neutral-500">
+                                    ※ サーバー(Lolipop)から手元のPCのバックエンドに接続する場合などに使用します。
+                                </p>
+                            </div>
+
+                            <div className="h-px bg-neutral-800 my-2" />
+
                             <div className="flex justify-between items-center">
                                 <label className="text-sm text-neutral-300">検出感度 (低いほど敏感): {detectionThreshold}</label>
                                 <div className="text-[10px] text-neutral-500 bg-neutral-800 px-2 py-0.5 rounded border border-neutral-700">

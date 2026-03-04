@@ -11,6 +11,7 @@ Main Endpoint: POST /api/detect-cuts
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 import cv2
 import numpy as np
 import tempfile
@@ -18,6 +19,7 @@ import os
 import uuid
 import json
 import asyncio
+import base64
 
 app = FastAPI(
     title="Baseball Video Analyzer API",
@@ -41,6 +43,11 @@ app.add_middleware(
 )
 
 
+# Use disk-backed directory for temp files (server /tmp is only 256MB tmpfs)
+UPLOAD_DIR = os.environ.get("UPLOAD_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads"))
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+
 @app.get("/api/health")
 def health_check():
     return {"status": "ok"}
@@ -61,56 +68,65 @@ async def detect_cuts(
     if not file.content_type or not file.content_type.startswith("video/"):
         raise HTTPException(status_code=400, detail="Uploaded file must be a video.")
 
-    # Save upload to a temp file
+    # Save upload to disk-backed uploads dir (not /tmp which is tiny tmpfs)
     suffix = os.path.splitext(file.filename or "video")[1] or ".mp4"
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        tmp.write(await file.read())
-        tmp_path = tmp.name
+    tmp_path = os.path.join(UPLOAD_DIR, f"{uuid.uuid4()}{suffix}")
+    with open(tmp_path, "wb") as f:
+        f.write(await file.read())
 
     return StreamingResponse(_run_video_analysis(tmp_path, threshold, min_interval), media_type="application/x-ndjson")
 
+
+# --- Pydantic models for JSON-based chunk upload ---
+class ChunkUploadRequest(BaseModel):
+    data: str  # Base64-encoded binary chunk
+    chunkIndex: int
+    totalChunks: int
+    sessionId: str
+    filename: str
+
+class ChunkedAnalysisRequest(BaseModel):
+    sessionId: str
+    filename: str
+    threshold: float = 50.0
+    min_interval: float = 0.5
+
+
 @app.post("/api/upload-chunk")
-async def upload_chunk(
-    chunk: UploadFile = File(...),
-    chunkIndex: int = Form(...),
-    totalChunks: int = Form(...),
-    sessionId: str = Form(...),
-    filename: str = Form(...)
-):
+async def upload_chunk(req: ChunkUploadRequest):
     """
-    Receive a chunk of a video file and append it to a temporary file.
+    Receive a Base64-encoded chunk of a video file and append it to a temporary file.
+    Uses JSON body instead of multipart/form-data to bypass Lolipop's reverse proxy restrictions.
     """
-    tmp_path = os.path.join(tempfile.gettempdir(), f"{sessionId}.part")
+    tmp_path = os.path.join(UPLOAD_DIR, f"{req.sessionId}.part")
+    
+    # Decode Base64 data back to binary
+    chunk_bytes = base64.b64decode(req.data)
     
     # Append mode for index > 0, write mode for the first chunk
-    mode = "ab" if chunkIndex > 0 else "wb"
+    mode = "ab" if req.chunkIndex > 0 else "wb"
     with open(tmp_path, mode) as f:
-        f.write(await chunk.read())
+        f.write(chunk_bytes)
         
-    return {"status": "success", "chunkIndex": chunkIndex, "totalChunks": totalChunks}
+    return {"status": "success", "chunkIndex": req.chunkIndex, "totalChunks": req.totalChunks}
 
 @app.post("/api/detect-cuts-chunked")
-async def detect_cuts_chunked(
-    sessionId: str = Form(...),
-    filename: str = Form(...),
-    threshold: float = Form(50.0),
-    min_interval: float = Form(0.5),
-):
+async def detect_cuts_chunked(req: ChunkedAnalysisRequest):
     """
     Start analysis on a fully assembled chunked video file.
     """
-    tmp_path_part = os.path.join(tempfile.gettempdir(), f"{sessionId}.part")
+    tmp_path_part = os.path.join(UPLOAD_DIR, f"{req.sessionId}.part")
     
     if not os.path.exists(tmp_path_part):
         raise HTTPException(status_code=400, detail="Chunked file not found. Upload might have failed.")
         
-    suffix = os.path.splitext(filename)[1] or ".mp4"
-    valid_tmp_path = os.path.join(tempfile.gettempdir(), f"{sessionId}{suffix}")
+    suffix = os.path.splitext(req.filename)[1] or ".mp4"
+    valid_tmp_path = os.path.join(UPLOAD_DIR, f"{req.sessionId}{suffix}")
     
     # Rename to have a valid video extension for OpenCV
     os.rename(tmp_path_part, valid_tmp_path)
     
-    return StreamingResponse(_run_video_analysis(valid_tmp_path, threshold, min_interval), media_type="application/x-ndjson")
+    return StreamingResponse(_run_video_analysis(valid_tmp_path, req.threshold, req.min_interval), media_type="application/x-ndjson")
 
 async def _run_video_analysis(video_path: str, threshold: float, min_interval: float):
     """

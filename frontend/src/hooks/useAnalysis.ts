@@ -10,7 +10,7 @@ export const useAnalysis = () => {
 
         try {
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 3000);
+            const timeoutId = setTimeout(() => controller.abort(), 15000);
 
             const response = await fetch(`${baseUrl}/api/health`, {
                 signal: controller.signal
@@ -48,26 +48,41 @@ export const useAnalysis = () => {
             const { backendUrl } = useVideoStore.getState();
             const baseUrl = backendUrl.endsWith('/') ? backendUrl.slice(0, -1) : backendUrl;
 
-            // --- Chunked Upload Logic ---
-            const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
+            // --- Chunked Upload Logic (Base64 JSON to bypass Lolipop proxy) ---
+            const CHUNK_SIZE = 1024 * 1024; // 1MB raw → ~1.3MB Base64, fits in proxy JSON limits
             const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
             const sessionId = crypto.randomUUID ? crypto.randomUUID() : Date.now().toString() + Math.random().toString(36).substring(7);
 
+            // Helper: convert ArrayBuffer to Base64 string
+            const arrayBufferToBase64 = (buffer: ArrayBuffer): string => {
+                const bytes = new Uint8Array(buffer);
+                let binary = '';
+                for (let i = 0; i < bytes.byteLength; i++) {
+                    binary += String.fromCharCode(bytes[i]);
+                }
+                return btoa(binary);
+            };
+
             for (let i = 0; i < totalChunks; i++) {
+                // Update progress (Upload is first 50%)
+                setAnalysisProgress(Math.round(((i) / totalChunks) * 50));
+
                 const start = i * CHUNK_SIZE;
                 const end = Math.min(start + CHUNK_SIZE, file.size);
                 const chunk = file.slice(start, end);
-
-                const chunkData = new FormData();
-                chunkData.append('chunk', chunk, file.name);
-                chunkData.append('chunkIndex', i.toString());
-                chunkData.append('totalChunks', totalChunks.toString());
-                chunkData.append('sessionId', sessionId);
-                chunkData.append('filename', file.name);
+                const chunkBuffer = await chunk.arrayBuffer();
+                const base64Data = arrayBufferToBase64(chunkBuffer);
 
                 const uploadResponse = await fetch(`${baseUrl}/api/upload-chunk`, {
                     method: 'POST',
-                    body: chunkData,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        data: base64Data,
+                        chunkIndex: i,
+                        totalChunks: totalChunks,
+                        sessionId: sessionId,
+                        filename: file.name,
+                    }),
                 });
 
                 if (!uploadResponse.ok) {
@@ -75,15 +90,17 @@ export const useAnalysis = () => {
                 }
             }
 
-            // --- Start Analysis on Assembled File ---
-            const analyzeData = new FormData();
-            analyzeData.append('sessionId', sessionId);
-            analyzeData.append('filename', file.name);
-            analyzeData.append('threshold', detectionThreshold.toString());
+            setAnalysisProgress(50); // Upload complete
 
+            // --- Start Analysis on Assembled File ---
             const response = await fetch(`${baseUrl}/api/detect-cuts-chunked`, {
                 method: 'POST',
-                body: analyzeData,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    sessionId: sessionId,
+                    filename: file.name,
+                    threshold: detectionThreshold,
+                }),
             });
 
             if (!response.body) return;
@@ -108,7 +125,8 @@ export const useAnalysis = () => {
                         const data = JSON.parse(line);
                         // console.log("Received analysis data:", data); // Too noisy for progress
                         if (data.type === 'progress') {
-                            setAnalysisProgress(data.value);
+                            // Map 0-100 analysis progress to 50-100 overall progress
+                            setAnalysisProgress(50 + Math.round(data.value / 2));
                         } else if (data.type === 'result') {
                             console.log("SUCCESS: Received final result!", data);
                             const store = useAnnotationStore.getState();

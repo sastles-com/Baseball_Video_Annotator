@@ -27,9 +27,9 @@ export const AutoDetectButton: React.FC = () => {
                     }`}
             >
                 {isAnalyzing ? (
-                    <><Loader2 size={16} className="animate-spin" /> 解析中...</>
+                    <><Loader2 size={16} className="animate-spin" /> {analysisProgress < 50 ? 'アップロード中...' : '解析中...'}</>
                 ) : (
-                    <><Zap size={16} /> カット手動検出</>
+                    <><Zap size={16} /> カット自動検出</>
                 )}
                 <input
                     ref={fileInputRef}
@@ -43,7 +43,7 @@ export const AutoDetectButton: React.FC = () => {
             {isAnalyzing && (
                 <div className="px-1">
                     <div className="flex justify-between text-[10px] text-neutral-500 mb-1">
-                        <span>Background Analysis</span>
+                        <span>{analysisProgress < 50 ? 'File Uploading' : 'Video Analysis'}</span>
                         <span>{analysisProgress}%</span>
                     </div>
                     <div className="w-full h-1 bg-neutral-800 rounded-full overflow-hidden">
