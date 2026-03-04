@@ -21,12 +21,22 @@ import json
 import base64
 import logging
 
-# Filter out health check logs to reduce noise
-class HealthCheckFilter(logging.Filter):
-    def filter(self, record: logging.LogRecord) -> bool:
-        return "/api/health" not in record.getMessage()
+# Filter out excessive logging to reduce noise
+class AccessLogFilter(logging.Filter):
+    def __init__(self, name: str = ""):
+        super().__init__(name)
+        self.upload_count = 0
 
-logging.getLogger("uvicorn.access").addFilter(HealthCheckFilter())
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        if "/api/health" in msg:
+            return False
+        if "/api/upload-chunk" in msg:
+            self.upload_count += 1
+            return self.upload_count % 100 == 0
+        return True
+
+logging.getLogger("uvicorn.access").addFilter(AccessLogFilter())
 
 app = FastAPI(
     title="Baseball Video Analyzer API",
