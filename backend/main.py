@@ -170,19 +170,26 @@ async def _run_video_analysis(video_path: str, threshold: float, min_interval: f
         report_step = max(1, total_frames // 40) # More frequent updates for smooth UI
 
         while True:
+            # Skip frames to reduce Disk I/O and CPU load
+            # Scene changes are typically several frames long, so 5-frame skip is safe.
+            skip_count = 5
+            for _ in range(skip_count - 1):
+                cap.grab() # grab() is faster than read() as it skips heavy decoding
+                frame_idx += 1
+            
             ret, frame = cap.read()
             if not ret:
                 break
+            frame_idx += 1
 
-            # PERFORMANCE: Resize frame to small width for much faster CPU processing
-            # 320px is enough to detect global scene changes
+            # PERFORMANCE: Resize frame for much faster processing
             h, w = frame.shape[:2]
             target_w = 320
             target_h = int(h * (target_w / w))
             small_frame = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_AREA)
 
             gray = cv2.cvtColor(small_frame, cv2.COLOR_BGR2GRAY)
-            current_time_sec = frame_idx / fps
+            current_time_sec = (frame_idx - 1) / fps
 
             if prev_gray is not None:
                 diff = float(np.mean(cv2.absdiff(gray, prev_gray)))
@@ -191,12 +198,11 @@ async def _run_video_analysis(video_path: str, threshold: float, min_interval: f
                     last_cut_time = current_time_sec
 
             prev_gray = gray
-            frame_idx += 1
 
-            if frame_idx % report_step == 0:
+            if frame_idx % report_step < skip_count:
                 progress = int((frame_idx / total_frames) * 100)
-                yield json.dumps({"type": "progress", "value": progress}) + "\n"
-                await asyncio.sleep(0.001)
+                yield json.dumps({"type": "progress", "value": min(progress, 99)}) + "\n"
+                await asyncio.sleep(0.005) # Yield to other OS tasks (like browser IO)
 
         cap.release()
 
