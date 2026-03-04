@@ -10,40 +10,8 @@ function formatTime(seconds: number): string {
     return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-interface VideoElementProps {
-    src: string;
-    videoRef: React.RefObject<HTMLVideoElement | null>;
-    onTimeUpdate: () => void;
-    onLoadedMetadata: () => void;
-    onEnded: () => void;
-    onClick: () => void;
-}
-
-// Separate component to isolate the <video> tag from frequent re-renders of the parent
-const VideoElement: React.FC<VideoElementProps> = React.memo(({ src, videoRef, onTimeUpdate, onLoadedMetadata, onEnded, onClick }) => {
-    console.log("VideoElement rendering with src length:", src.length);
-    return (
-        <video
-            ref={videoRef}
-            src={src}
-            className="w-full h-full object-contain flex-1 cursor-pointer"
-            onTimeUpdate={onTimeUpdate}
-            onLoadedMetadata={onLoadedMetadata}
-            onEnded={onEnded}
-            onClick={onClick}
-            onSeeking={() => console.log("Video status: seeking...")}
-            onSeeked={() => console.log("Video status: seeked")}
-            onWaiting={() => console.log("Video status: waiting...")}
-            onCanPlay={() => console.log("Video status: canplay")}
-            playsInline
-            preload="auto"
-            crossOrigin="anonymous"
-        />
-    );
-}, (prev, next) => prev.src === next.src);
-
 export const VideoPlayer: React.FC = React.memo(() => {
-    // Select only needed state to avoid unnecessary re-renders
+    // Select state
     const videoUrl = useVideoStore(state => state.videoUrl);
     const isPlaying = useVideoStore(state => state.isPlaying);
     const setIsPlaying = useVideoStore(state => state.setIsPlaying);
@@ -57,12 +25,14 @@ export const VideoPlayer: React.FC = React.memo(() => {
     const { addBookmark } = useAnnotationStore();
     const videoRef = useRef<HTMLVideoElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
-    const [seeking, setSeeking] = useState(false);
+
+    // Local state to manage user interaction vs store sync
+    const [isInternalSeeking, setIsInternalSeeking] = useState(false);
     const [muted, setMuted] = useState(false);
 
-    // Initial log
+    // Initial mount log
     useEffect(() => {
-        console.log("VideoPlayer mounted");
+        console.log("VideoPlayer mounted. URL:", videoUrl?.substring(0, 30));
         return () => console.log("VideoPlayer unmounted");
     }, []);
 
@@ -72,41 +42,45 @@ export const VideoPlayer: React.FC = React.memo(() => {
         if (!video || !videoUrl) return;
 
         if (isPlaying) {
+            console.log("Playing video...");
             video.play().catch(err => {
-                console.warn("Play blocked:", err);
+                console.warn("Play failed:", err);
                 setIsPlaying(false);
             });
         } else {
+            console.log("Pausing video...");
             video.pause();
         }
     }, [isPlaying, videoUrl, setIsPlaying]);
 
     // Sync volume
     useEffect(() => {
-        if (videoRef.current) videoRef.current.volume = muted ? 0 : volume;
+        if (videoRef.current) {
+            videoRef.current.volume = muted ? 0 : volume;
+        }
     }, [volume, muted]);
 
-    // Sync "played" store value to video.currentTime (External updates)
+    // Sync store 'played' value to video.currentTime (External seek/jump)
     useEffect(() => {
         const video = videoRef.current;
-        if (!video || seeking || !videoUrl || !video.duration || isNaN(video.duration)) {
+        if (!video || isInternalSeeking || !videoUrl || !video.duration || isNaN(video.duration) || video.duration <= 0) {
             return;
         }
 
-        const storeTime = played * video.duration;
-        // Only seek if the difference is significant (> 0.2s)
-        if (Math.abs(video.currentTime - storeTime) > 0.2) {
-            console.log("External Seek -> currentTime:", storeTime);
-            video.currentTime = storeTime;
+        const targetTime = played * video.duration;
+        // Significant difference threshold (0.2s)
+        if (Math.abs(video.currentTime - targetTime) > 0.2) {
+            console.log("Syncing External Seek ->", targetTime);
+            video.currentTime = targetTime;
         }
-    }, [played, seeking, videoUrl]);
+    }, [played, isInternalSeeking, videoUrl]);
 
     // Internal time update from video element
     const handleTimeUpdate = () => {
         const video = videoRef.current;
-        if (!video || seeking || video.duration <= 0) return;
+        if (!video || isInternalSeeking || video.duration <= 0) return;
+
         const newPlayed = video.currentTime / video.duration;
-        // Only update store if the difference is significant
         if (Math.abs(played - newPlayed) > 0.001) {
             setPlayed(newPlayed);
         }
@@ -114,12 +88,30 @@ export const VideoPlayer: React.FC = React.memo(() => {
 
     const handleLoadedMetadata = () => {
         if (videoRef.current) {
-            console.log("Metadata Load -> Duration:", videoRef.current.duration);
+            console.log("Metadata Loaded. Duration:", videoRef.current.duration);
             setDuration(videoRef.current.duration);
         }
     };
 
-    // Mouse wheel scrubbing
+    // Scrubber drag handlers
+    const handleSeekMouseDown = () => {
+        setIsInternalSeeking(true);
+    };
+
+    const handleSeekMouseUp = () => {
+        setIsInternalSeeking(false);
+    };
+
+    const handleSeekChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const fraction = parseFloat(e.target.value);
+        setPlayed(fraction);
+        const video = videoRef.current;
+        if (video && !isNaN(video.duration) && video.duration > 0) {
+            video.currentTime = fraction * video.duration;
+        }
+    };
+
+    // Frame stepping via wheel
     useEffect(() => {
         const container = containerRef.current;
         if (!container) return;
@@ -127,16 +119,12 @@ export const VideoPlayer: React.FC = React.memo(() => {
         const handleWheel = (e: WheelEvent) => {
             e.preventDefault();
             const video = videoRef.current;
-            if (!video || !videoUrl || isNaN(video.duration)) return;
+            if (!video || !videoUrl || isNaN(video.duration) || video.duration <= 0) return;
 
             setIsPlaying(false);
-            const frameTime = 1 / 30;
-            const step = -(e.deltaY / 20) * frameTime;
-
-            const newTime = Math.min(
-                video.duration,
-                Math.max(0, video.currentTime + step)
-            );
+            // 1/30s per step
+            const step = -(e.deltaY / 20) * (1 / 30);
+            const newTime = Math.min(video.duration, Math.max(0, video.currentTime + step));
             video.currentTime = newTime;
             setPlayed(newTime / video.duration);
         };
@@ -144,27 +132,6 @@ export const VideoPlayer: React.FC = React.memo(() => {
         container.addEventListener('wheel', handleWheel, { passive: false });
         return () => container.removeEventListener('wheel', handleWheel);
     }, [videoUrl, setIsPlaying, setPlayed]);
-
-    // Scrubber drag handlers
-    const handleSeekMouseDown = () => {
-        console.log("Scrubber drag start");
-        setSeeking(true);
-    };
-
-    const handleSeekMouseUp = () => {
-        console.log("Scrubber drag end");
-        setSeeking(false);
-    };
-
-    const handleSeekChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const fraction = parseFloat(e.target.value);
-        setPlayed(fraction);
-        const video = videoRef.current;
-        if (video && !isNaN(video.duration)) {
-            // Force immediate seek for real-time preview
-            video.currentTime = fraction * video.duration;
-        }
-    };
 
     const jumpToBookmark = (direction: 'next' | 'prev') => {
         const { bookmarks, setSelectedChunkId, chunks } = useAnnotationStore.getState();
@@ -179,11 +146,8 @@ export const VideoPlayer: React.FC = React.memo(() => {
             targetTime = prev ? prev.time : 0;
         } else {
             const next = bookmarks.find(b => b.time > currentTime + 0.5);
-            if (next) {
-                targetTime = next.time;
-            } else {
-                return;
-            }
+            if (next) targetTime = next.time;
+            else return;
         }
 
         if (video) video.currentTime = targetTime;
@@ -202,13 +166,19 @@ export const VideoPlayer: React.FC = React.memo(() => {
             ref={containerRef}
             className="w-full h-full flex flex-col group relative rounded-2xl overflow-hidden bg-black ring-1 ring-white/5 shadow-2xl"
         >
-            <VideoElement
+            <video
+                ref={videoRef}
                 src={videoUrl}
-                videoRef={videoRef}
+                className="w-full h-full object-contain flex-1 cursor-pointer"
                 onTimeUpdate={handleTimeUpdate}
                 onLoadedMetadata={handleLoadedMetadata}
                 onEnded={() => setIsPlaying(false)}
                 onClick={() => setIsPlaying(!isPlaying)}
+                onSeeking={() => console.log("Video: seeking...")}
+                onSeeked={() => console.log("Video: seeked")}
+                onError={(e) => console.error("Video Error:", (e.target as HTMLVideoElement).error)}
+                playsInline
+                preload="auto"
             />
 
             <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/95 to-transparent px-4 pb-4 pt-12 opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-10 pointer-events-none">
@@ -237,14 +207,14 @@ export const VideoPlayer: React.FC = React.memo(() => {
                             <div className="flex items-center gap-1">
                                 <button
                                     onClick={() => jumpToBookmark('prev')}
-                                    title="Previous (Left Arrow)"
+                                    title="Prev (Left)"
                                     className="text-neutral-400 hover:text-white transition-colors focus:outline-none p-1"
                                 >
                                     <SkipBack size={18} />
                                 </button>
                                 <button
                                     onClick={() => jumpToBookmark('next')}
-                                    title="Next (Right Arrow)"
+                                    title="Next (Right)"
                                     className="text-neutral-400 hover:text-white transition-colors focus:outline-none p-1"
                                 >
                                     <SkipForward size={18} />
