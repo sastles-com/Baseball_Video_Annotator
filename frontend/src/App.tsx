@@ -142,7 +142,8 @@ function App() {
 
   const jumpToBookmark = (direction: 'next' | 'prev') => {
     const { bookmarks, chunks, setSelectedChunkId } = useAnnotationStore.getState();
-    const { played, duration, setPlayed, videoUrl } = useVideoStore.getState();
+    const { duration, videoUrl, triggerSeek } = useVideoStore.getState();
+    const played = useVideoStore.getState().played;
     if (bookmarks.length === 0 || !videoUrl) return;
 
     const currentTime = played * duration;
@@ -157,7 +158,7 @@ function App() {
       else return;
     }
 
-    setPlayed(targetTime / (duration || 1));
+    triggerSeek(targetTime);
     const targetChunk = chunks.find(c => Math.abs(c.startTime - targetTime) < 0.1);
     if (targetChunk) setSelectedChunkId(targetChunk.id);
   };

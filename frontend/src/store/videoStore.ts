@@ -15,6 +15,10 @@ interface VideoState {
     backendUrl: string;
     backendStatus: 'online' | 'offline' | 'checking';
 
+    // Explicit seek trigger to avoid reactivity loops
+    lastSeekTime: number | null;
+    triggerSeek: (time: number) => void;
+
     setVideoUrl: (url: string | null) => void;
     setIsPlaying: (isPlaying: boolean) => void;
     setPlayed: (played: number) => void;
@@ -41,6 +45,7 @@ export const useVideoStore = create<VideoState>((set) => ({
     currentFile: null,
     backendUrl: localStorage.getItem('video_analyzer_backend_url') || 'http://localhost:8000',
     backendStatus: 'offline',
+    lastSeekTime: null,
 
     setVideoUrl: (url) => set({ videoUrl: url }),
     setIsPlaying: (isPlaying) => set({ isPlaying }),
@@ -59,6 +64,7 @@ export const useVideoStore = create<VideoState>((set) => ({
         set({ backendUrl });
     },
     setBackendStatus: (backendStatus) => set({ backendStatus }),
+    triggerSeek: (time) => set({ lastSeekTime: time }),
     checkBackendStatus: async () => {
         const { backendUrl } = useVideoStore.getState();
         set({ backendStatus: 'checking' });

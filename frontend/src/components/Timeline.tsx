@@ -58,7 +58,7 @@ const DetailGrid = React.memo(({ windowStart, duration }: { windowStart: number,
 export const Timeline: React.FC = () => {
     const duration = useVideoStore(state => state.duration);
     const played = useVideoStore(state => state.played);
-    const setPlayed = useVideoStore(state => state.setPlayed);
+    const triggerSeek = useVideoStore(state => state.triggerSeek);
 
     const bookmarks = useAnnotationStore(state => state.bookmarks);
     const chunks = useAnnotationStore(state => state.chunks);
@@ -81,7 +81,8 @@ export const Timeline: React.FC = () => {
         if (!overviewRef.current || duration === 0) return;
         const rect = overviewRef.current.getBoundingClientRect();
         const x = e.clientX - rect.left;
-        setPlayed(Math.max(0, Math.min(1, x / rect.width)));
+        const targetFraction = Math.max(0, Math.min(1, x / rect.width));
+        triggerSeek(targetFraction * duration);
     };
 
     const handleDetailClick = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -89,7 +90,7 @@ export const Timeline: React.FC = () => {
         const rect = detailRef.current.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const clickTime = windowStart + (x / rect.width) * WINDOW_SIZE;
-        setPlayed(Math.max(0, Math.min(duration, clickTime)) / duration);
+        triggerSeek(Math.max(0, Math.min(duration, clickTime)));
     };
 
     const formatTime = (seconds: number) => {
@@ -162,7 +163,7 @@ export const Timeline: React.FC = () => {
                                 key={b.id}
                                 className="absolute top-0 bottom-0 w-px bg-red-500/80 z-30 group"
                                 style={{ left: `${((b.time - windowStart) / WINDOW_SIZE) * 100}%` }}
-                                onClick={(e) => { e.stopPropagation(); setPlayed(b.time / duration); }}
+                                onClick={(e) => { e.stopPropagation(); triggerSeek(b.time); }}
                             >
                                 <div className="absolute -top-1 -left-1.5 w-3 h-3 bg-red-500 rounded-sm rotate-45 transform hover:scale-125 transition-transform cursor-pointer"
                                     onClick={(e) => { e.stopPropagation(); removeBookmark(b.id); }}

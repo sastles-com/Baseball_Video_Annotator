@@ -18,9 +18,11 @@ export const VideoPlayer: React.FC = React.memo(() => {
     const setDuration = useVideoStore(state => state.setDuration);
     const setPlayed = useVideoStore(state => state.setPlayed);
     const duration = useVideoStore(state => state.duration);
-    const played = useVideoStore(state => state.played);
     const volume = useVideoStore(state => state.volume);
     const setVolume = useVideoStore(state => state.setVolume);
+
+    // EXPLICIT SEEK TRIGGER: VideoPlayer only seeks when this changes
+    const lastSeekTime = useVideoStore(state => state.lastSeekTime);
 
     const { addBookmark } = useAnnotationStore();
 
@@ -35,12 +37,8 @@ export const VideoPlayer: React.FC = React.memo(() => {
     const [localPlayed, setLocalPlayed] = useState(0);
     const [muted, setMuted] = useState(false);
 
-    // Initial sync of localPlayed when played changes externally
-    useEffect(() => {
-        if (!isInternalSeeking) {
-            setLocalPlayed(played);
-        }
-    }, [played, isInternalSeeking]);
+    // Synchronize localPlayed to Video CurrentTime (instead of store's played)
+    // This removes the store-to-video reactivity loop
 
     // Handle Play/Pause
     useEffect(() => {
@@ -64,30 +62,32 @@ export const VideoPlayer: React.FC = React.memo(() => {
         }
     }, [volume, muted]);
 
-    // External Seek (Jump to bookmark, etc.)
+    // --- PUSH-ONLY SEEK LOGIC ---
+    // React to the explicit seek trigger from the store
     useEffect(() => {
         const video = videoRef.current;
-        if (!video || isInternalSeeking || !video.duration || isNaN(video.duration)) return;
+        if (!video || lastSeekTime === null || !video.duration || isNaN(video.duration)) return;
 
-        const targetTime = played * video.duration;
-        if (Math.abs(video.currentTime - targetTime) > 0.5) {
-            console.log("VideoPlayer: External Seek ->", targetTime);
-            video.currentTime = targetTime;
-        }
-    }, [played, isInternalSeeking]);
+        console.log("VideoPlayer: PUSH SEEK ->", lastSeekTime);
+        video.currentTime = lastSeekTime;
+        const newFraction = lastSeekTime / video.duration;
+        setLocalPlayed(newFraction);
+        setPlayed(newFraction);
+    }, [lastSeekTime, setPlayed]);
 
     // Time Update (Video -> Store/UI)
-    // Throttled to 200ms during normal playback to reduce UI load
+    // Throttled to reduce UI load
     const handleTimeUpdate = () => {
         const video = videoRef.current;
         if (!video || isInternalSeeking || video.duration <= 0) return;
 
         const now = Date.now();
-        if (now - lastStoreUpdateRef.current > 200) {
+        const lp = video.currentTime / video.duration;
+        setLocalPlayed(lp); // Keep local slider in sync with video real-time
+
+        if (now - lastStoreUpdateRef.current > 250) {
             lastStoreUpdateRef.current = now;
-            const newPlayed = video.currentTime / video.duration;
-            setPlayed(newPlayed);
-            setLocalPlayed(newPlayed);
+            setPlayed(lp); // Update store for other components (Timeline etc.)
         }
     };
 
@@ -99,14 +99,12 @@ export const VideoPlayer: React.FC = React.memo(() => {
     };
 
     // --- Interactive Scrubbing (Slider) ---
-
     const handleSeekMouseDown = () => {
         setIsInternalSeeking(true);
     };
 
     const handleSeekMouseUp = () => {
         setIsInternalSeeking(false);
-        // Final sync on release
         const video = videoRef.current;
         if (video && !isNaN(video.duration) && video.duration > 0) {
             video.currentTime = localPlayed * video.duration;
@@ -116,10 +114,8 @@ export const VideoPlayer: React.FC = React.memo(() => {
 
     const handleSeekChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const fraction = parseFloat(e.target.value);
-        setLocalPlayed(fraction); // Update UI slider immediately
+        setLocalPlayed(fraction);
 
-        // THROTTLE SEEK REQUESTS: Only tell the video element to seek every 100ms
-        // This is CRITICAL for Mac/Safari/Chrome performance with 4K or heavy video
         const now = Date.now();
         if (now - lastSeekRequestRef.current > 100) {
             lastSeekRequestRef.current = now;
@@ -143,16 +139,14 @@ export const VideoPlayer: React.FC = React.memo(() => {
             setIsInternalSeeking(true);
             setIsPlaying(false);
 
-            // Assuming ~30fps, move 1 frame per click
             const step = -(Math.sign(e.deltaY)) * (1 / 30);
             const newTime = Math.min(video.duration, Math.max(0, video.currentTime + step));
 
             video.currentTime = newTime;
-            const newPlayed = newTime / video.duration;
-            setLocalPlayed(newPlayed);
-            setPlayed(newPlayed);
+            const lp = newTime / video.duration;
+            setLocalPlayed(lp);
+            setPlayed(lp);
 
-            // Release lock after short delay to allow UI to catch up
             window.clearTimeout((window as any)._wheelTimeout);
             (window as any)._wheelTimeout = window.setTimeout(() => setIsInternalSeeking(false), 150);
         };
@@ -161,12 +155,14 @@ export const VideoPlayer: React.FC = React.memo(() => {
         return () => container.removeEventListener('wheel', handleWheel);
     }, [videoUrl, setIsPlaying, setPlayed]);
 
-    const jumpToBookmark = useCallback((direction: 'next' | 'prev') => {
+    const jumpToBookmarkLocal = useCallback((direction: 'next' | 'prev') => {
         const { bookmarks, setSelectedChunkId, chunks } = useAnnotationStore.getState();
         if (bookmarks.length === 0) return;
 
         const video = videoRef.current;
-        const currentT = video ? video.currentTime : (played * duration);
+        if (!video) return;
+
+        const currentT = video.currentTime;
         let targetTime = 0;
 
         if (direction === 'prev') {
@@ -178,14 +174,14 @@ export const VideoPlayer: React.FC = React.memo(() => {
             else return;
         }
 
-        if (video) video.currentTime = targetTime;
+        video.currentTime = targetTime;
         const np = targetTime / (duration || 1);
         setPlayed(np);
         setLocalPlayed(np);
 
         const targetChunk = chunks.find(c => Math.abs(c.startTime - targetTime) < 0.1);
         if (targetChunk) setSelectedChunkId(targetChunk.id);
-    }, [played, duration, setPlayed]);
+    }, [duration, setPlayed]);
 
     if (!videoUrl) return null;
 
@@ -202,8 +198,6 @@ export const VideoPlayer: React.FC = React.memo(() => {
                 onLoadedMetadata={handleLoadedMetadata}
                 onEnded={() => setIsPlaying(false)}
                 onClick={() => setIsPlaying(!isPlaying)}
-                onSeeking={() => { }} // Disabled logging to reduce noise
-                onSeeked={() => { }}
                 onError={(e) => {
                     const error = (e.target as HTMLVideoElement).error;
                     console.error("VideoPlayer Error:", error?.code, error?.message);
@@ -213,10 +207,8 @@ export const VideoPlayer: React.FC = React.memo(() => {
                 autoPlay={false}
             />
 
-            {/* Controls Overlay */}
             <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/95 to-transparent px-4 pb-4 pt-12 opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-10 pointer-events-none">
                 <div className="pointer-events-auto">
-                    {/* Scrub Bar */}
                     <input
                         type="range"
                         min={0}
@@ -240,14 +232,14 @@ export const VideoPlayer: React.FC = React.memo(() => {
 
                             <div className="flex items-center gap-1">
                                 <button
-                                    onClick={() => jumpToBookmark('prev')}
+                                    onClick={() => jumpToBookmarkLocal('prev')}
                                     title="Prev Bookmark"
                                     className="text-neutral-400 hover:text-white transition-colors focus:outline-none p-1"
                                 >
                                     <SkipBack size={18} />
                                 </button>
                                 <button
-                                    onClick={() => jumpToBookmark('next')}
+                                    onClick={() => jumpToBookmarkLocal('next')}
                                     title="Next Bookmark"
                                     className="text-neutral-400 hover:text-white transition-colors focus:outline-none p-1"
                                 >
