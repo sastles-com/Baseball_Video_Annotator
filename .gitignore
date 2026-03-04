@@ -1,0 +1,14 @@
+.DS_Store
+__pycache__/
+*.pyc
+backend/venv/
+frontend/node_modules/
+backend/uploads/
+*.part
+*.mp4
+*.webm
+*.mov
+*.qt
+dist/
+.env
+.ipynb_checkpoints/
