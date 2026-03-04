@@ -110,22 +110,26 @@ class ChunkedAnalysisRequest(BaseModel):
 
 
 @app.post("/api/upload-chunk")
-async def upload_chunk(req: ChunkUploadRequest):
+async def upload_chunk(
+    index: int = Form(...),
+    total: int = Form(...),
+    session_id: str = Form(...),
+    filename: str = Form(...),
+    file: UploadFile = File(...)
+):
     """
-    Receive a Base64-encoded chunk of a video file and append it to a temporary file.
-    Uses JSON body instead of multipart/form-data to bypass Lolipop's reverse proxy restrictions.
+    Receive a raw binary chunk and append it to a temporary file.
+    Uses multipart/form-data with a single file field for maximum efficiency.
     """
-    tmp_path = os.path.join(UPLOAD_DIR, f"{req.sessionId}.part")
-    
-    # Decode Base64 data back to binary
-    chunk_bytes = base64.b64decode(req.data)
+    tmp_path = os.path.join(UPLOAD_DIR, f"{session_id}.part")
     
     # Append mode for index > 0, write mode for the first chunk
-    mode = "ab" if req.chunkIndex > 0 else "wb"
+    mode = "ab" if index > 0 else "wb"
     with open(tmp_path, mode) as f:
-        f.write(chunk_bytes)
+        content = await file.read()
+        f.write(content)
         
-    return {"status": "success", "chunkIndex": req.chunkIndex, "totalChunks": req.totalChunks}
+    return {"status": "success", "chunkIndex": index, "totalChunks": total}
 
 @app.post("/api/detect-cuts-chunked")
 async def detect_cuts_chunked(req: ChunkedAnalysisRequest):
@@ -135,24 +139,22 @@ async def detect_cuts_chunked(req: ChunkedAnalysisRequest):
     tmp_path_part = os.path.join(UPLOAD_DIR, f"{req.sessionId}.part")
     
     if not os.path.exists(tmp_path_part):
-        raise HTTPException(status_code=400, detail="Chunked file not found. Upload might have failed.")
+        raise HTTPException(status_code=400, detail="Chunked file not found.")
         
     suffix = os.path.splitext(req.filename)[1] or ".mp4"
     valid_tmp_path = os.path.join(UPLOAD_DIR, f"{req.sessionId}{suffix}")
     
-    # Rename to have a valid video extension for OpenCV
     os.rename(tmp_path_part, valid_tmp_path)
-    
     return StreamingResponse(_run_video_analysis(valid_tmp_path, req.threshold, req.min_interval), media_type="application/x-ndjson")
 
 async def _run_video_analysis(video_path: str, threshold: float, min_interval: float):
     """
-    Shared generator function to run OpenCV analysis and yield JSON progress.
+    Optimized analysis: Resizes frames for faster cut detection.
     """
     try:
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
-            yield json.dumps({"type": "error", "message": "Could not open video file"}) + "\n"
+            yield json.dumps({"type": "error", "message": "Could not open video"}) + "\n"
             return
 
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -163,17 +165,22 @@ async def _run_video_analysis(video_path: str, threshold: float, min_interval: f
         prev_gray = None
         cut_times = []
         last_cut_time = -min_interval
-
         frame_idx = 0
-        # Report progress every 5%
-        report_step = max(1, total_frames // 20)
+        report_step = max(1, total_frames // 40) # More frequent updates for smooth UI
 
         while True:
             ret, frame = cap.read()
             if not ret:
                 break
 
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            # PERFORMANCE: Resize frame to small width for much faster CPU processing
+            # 320px is enough to detect global scene changes
+            h, w = frame.shape[:2]
+            target_w = 320
+            target_h = int(h * (target_w / w))
+            small_frame = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_AREA)
+
+            gray = cv2.cvtColor(small_frame, cv2.COLOR_BGR2GRAY)
             current_time_sec = frame_idx / fps
 
             if prev_gray is not None:
@@ -188,8 +195,7 @@ async def _run_video_analysis(video_path: str, threshold: float, min_interval: f
             if frame_idx % report_step == 0:
                 progress = int((frame_idx / total_frames) * 100)
                 yield json.dumps({"type": "progress", "value": progress}) + "\n"
-                # Give some breathing room for the stream
-                await asyncio.sleep(0.01)
+                await asyncio.sleep(0.001)
 
         cap.release()
 

@@ -48,54 +48,37 @@ export const useAnalysis = () => {
             const { backendUrl } = useVideoStore.getState();
             const baseUrl = backendUrl.endsWith('/') ? backendUrl.slice(0, -1) : backendUrl;
 
-            // --- Chunked Upload Logic (Base64 JSON to bypass Lolipop proxy) ---
-            const CHUNK_SIZE = 1024 * 1024; // 1MB raw → ~1.3MB Base64, fits in proxy JSON limits
+            // --- Binary Chunked Upload (Raw blobs for performance) ---
+            const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
             const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
             const sessionId = crypto.randomUUID ? crypto.randomUUID() : Date.now().toString() + Math.random().toString(36).substring(7);
 
-            // Helper: convert Blob/File chunk to Base64 string asynchronously
-            const blobToBase64 = (blob: Blob): Promise<string> => {
-                return new Promise((resolve, reject) => {
-                    const reader = new FileReader();
-                    reader.onload = () => {
-                        const base64 = (reader.result as string).split(',')[1];
-                        resolve(base64);
-                    };
-                    reader.onerror = reject;
-                    reader.readAsDataURL(blob);
-                });
-            };
-
             for (let i = 0; i < totalChunks; i++) {
-                // Yield to the main thread occasionally to allow UI/Audio to process, but without long sleep
-                if (i % 5 === 0) {
-                    await new Promise(resolve => setTimeout(resolve, 0));
-                }
-
-                // Update progress (Upload is first 50%)
-                setAnalysisProgress(Math.round(((i) / totalChunks) * 50));
+                // Yield to the main thread briefly for UI
+                if (i % 3 === 0) await new Promise(resolve => setTimeout(resolve, 0));
 
                 const start = i * CHUNK_SIZE;
                 const end = Math.min(start + CHUNK_SIZE, file.size);
                 const chunk = file.slice(start, end);
 
-                // Base64 conversion
-                const base64Data = await blobToBase64(chunk);
+                // Update progress (Upload is first 50%)
+                setAnalysisProgress(Math.round(((i) / totalChunks) * 50));
+
+                const formData = new FormData();
+                formData.append('file', chunk, file.name);
+                formData.append('index', i.toString());
+                formData.append('total', totalChunks.toString());
+                formData.append('session_id', sessionId);
+                formData.append('filename', file.name);
 
                 const uploadResponse = await fetch(`${baseUrl}/api/upload-chunk`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        data: base64Data,
-                        chunkIndex: i,
-                        totalChunks: totalChunks,
-                        sessionId: sessionId,
-                        filename: file.name,
-                    }),
+                    body: formData, // Sending raw binary as multipart/form-data
                 });
 
                 if (!uploadResponse.ok) {
-                    throw new Error(`Failed to upload chunk ${i + 1}/${totalChunks}`);
+                    const errorText = await uploadResponse.text();
+                    throw new Error(`Upload failed (${uploadResponse.status}): ${errorText}`);
                 }
             }
 

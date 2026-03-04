@@ -172,13 +172,19 @@ export const VideoPlayer: React.FC = React.memo(() => {
                 className="w-full h-full object-contain flex-1 cursor-pointer"
                 onTimeUpdate={handleTimeUpdate}
                 onLoadedMetadata={handleLoadedMetadata}
+                onLoadedData={() => console.log("Video: first frame loaded")}
+                onCanPlay={() => console.log("Video: can play now")}
                 onEnded={() => setIsPlaying(false)}
                 onClick={() => setIsPlaying(!isPlaying)}
                 onSeeking={() => console.log("Video: seeking...")}
                 onSeeked={() => console.log("Video: seeked")}
-                onError={(e) => console.error("Video Error:", (e.target as HTMLVideoElement).error)}
+                onError={(e) => {
+                    const error = (e.target as HTMLVideoElement).error;
+                    console.error("Video Error:", error?.code, error?.message);
+                }}
                 playsInline
                 preload="auto"
+                autoPlay={false}
             />
 
             <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/95 to-transparent px-4 pb-4 pt-12 opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-10 pointer-events-none">
