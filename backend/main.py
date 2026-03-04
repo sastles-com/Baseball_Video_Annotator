@@ -18,8 +18,15 @@ import tempfile
 import os
 import uuid
 import json
-import asyncio
 import base64
+import logging
+
+# Filter out health check logs to reduce noise
+class HealthCheckFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "/api/health" not in record.getMessage()
+
+logging.getLogger("uvicorn.access").addFilter(HealthCheckFilter())
 
 app = FastAPI(
     title="Baseball Video Analyzer API",

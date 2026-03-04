@@ -38,11 +38,15 @@ function App() {
 
   useEffect(() => {
     initializePresets();
-    // initial check
     checkBackendHealth();
 
-    // periodic check every 30s
-    const interval = setInterval(checkBackendHealth, 30000);
+    // periodic check every 60s, skip if analyzing to reduce noise
+    const interval = setInterval(() => {
+      const state = useVideoStore.getState();
+      if (!state.isAnalyzing) {
+        checkBackendHealth();
+      }
+    }, 60000);
     return () => clearInterval(interval);
   }, [initializePresets, checkBackendHealth]);
 
