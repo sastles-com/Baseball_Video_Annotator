@@ -114,11 +114,15 @@ async def detect_cuts(
 
             # Result
             bookmarks = [{"id": str(uuid.uuid4()), "time": t} for t in cut_times]
-            yield json.dumps({
+            final_json = json.dumps({
                 "type": "result",
                 "total_cuts": len(bookmarks),
                 "bookmarks": bookmarks
             }) + "\n"
+            
+            # Padding to force Nginx buffer flush (typically 4KB needed, we send a bit)
+            padding = " " * 4096 + "\n"
+            yield final_json + padding
 
         except Exception as e:
             yield json.dumps({"type": "error", "message": str(e)}) + "\n"

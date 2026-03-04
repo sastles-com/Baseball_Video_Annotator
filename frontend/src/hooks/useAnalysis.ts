@@ -69,26 +69,44 @@ export const useAnalysis = () => {
 
                 buffer += decoder.decode(value, { stream: true });
                 const lines = buffer.split('\n');
+
+                // Keep the last incomplete line in the buffer
                 buffer = lines.pop() || '';
 
                 for (const line of lines) {
                     if (!line.trim()) continue;
                     try {
                         const data = JSON.parse(line);
-                        console.log("Received analysis data:", data);
+                        // console.log("Received analysis data:", data); // Too noisy for progress
                         if (data.type === 'progress') {
                             setAnalysisProgress(data.value);
                         } else if (data.type === 'result') {
+                            console.log("SUCCESS: Received final result!", data);
                             const store = useAnnotationStore.getState();
                             data.bookmarks.forEach((b: any) => store.addBookmark(b.time));
                             setAnalysisProgress(100);
                         } else if (data.type === 'error') {
-                            console.error("Analysis error:", data.message);
+                            console.error("Analysis backend error:", data.message);
                             alert(`解析エラー: ${data.message}`);
                         }
                     } catch (e) {
-                        console.error("Error parsing progress line:", e);
+                        console.error("JSON parse error on line:", line);
+                        console.error("Parse exception:", e);
                     }
+                }
+            }
+            // Check if there's anything left in the buffer after the stream ends
+            if (buffer.trim()) {
+                try {
+                    const data = JSON.parse(buffer);
+                    if (data.type === 'result') {
+                        console.log("SUCCESS: Received final result from remaining buffer!", data);
+                        const store = useAnnotationStore.getState();
+                        data.bookmarks.forEach((b: any) => store.addBookmark(b.time));
+                        setAnalysisProgress(100);
+                    }
+                } catch (e) {
+                    console.error("JSON parse error on final buffer:", buffer);
                 }
             }
         } catch (err) {
