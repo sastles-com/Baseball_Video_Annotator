@@ -121,12 +121,21 @@ export const VideoPlayer: React.FC = React.memo(() => {
             const video = videoRef.current;
             if (!video || !videoUrl || isNaN(video.duration) || video.duration <= 0) return;
 
+            console.log("Video: wheel step", e.deltaY);
+            setIsInternalSeeking(true);
             setIsPlaying(false);
-            // 1/30s per step
-            const step = -(e.deltaY / 20) * (1 / 30);
+
+            // 1/30s per step (Assuming 30fps video)
+            const step = -(Math.sign(e.deltaY)) * (1 / 30);
             const newTime = Math.min(video.duration, Math.max(0, video.currentTime + step));
+
             video.currentTime = newTime;
-            setPlayed(newTime / video.duration);
+            const newPlayed = newTime / video.duration;
+            setPlayed(newPlayed);
+
+            // Brief timeout to release internal seeking lock after wheeling stops
+            // This prevents handleTimeUpdate from jumping back
+            setTimeout(() => setIsInternalSeeking(false), 50);
         };
 
         container.addEventListener('wheel', handleWheel, { passive: false });

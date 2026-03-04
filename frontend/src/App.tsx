@@ -14,18 +14,87 @@ import { ImportButton } from './components/ImportButton';
 import { useHotkeys } from 'react-hotkeys-hook';
 import { useAnalysis } from './hooks/useAnalysis';
 
-function App() {
-  // Select only needed state separately to avoid unnecessary re-renders of the whole App
-  const videoUrl = useVideoStore(state => state.videoUrl);
-  const setVideoUrl = useVideoStore(state => state.setVideoUrl);
-  const isPlaying = useVideoStore(state => state.isPlaying);
-  const setIsPlaying = useVideoStore(state => state.setIsPlaying);
-  const played = useVideoStore(state => state.played);
-  const setPlayed = useVideoStore(state => state.setPlayed);
-  const duration = useVideoStore(state => state.duration);
+// Sub-component to handle analysis progress without re-rendering the whole App
+const AnalysisOverlay: React.FC = () => {
   const isAnalyzing = useVideoStore(state => state.isAnalyzing);
   const analysisProgress = useVideoStore(state => state.analysisProgress);
+
+  if (!isAnalyzing) return null;
+
+  return (
+    <div className="absolute inset-x-0 top-12 flex justify-center z-20 pointer-events-none">
+      <div className="bg-neutral-900/90 backdrop-blur-md border border-neutral-700 rounded-2xl p-4 shadow-2xl flex flex-col items-center gap-3 w-72 pointer-events-auto scale-in duration-300">
+        <div className="flex items-center gap-2 text-emerald-400 text-sm font-semibold">
+          <RefreshCw size={16} className="animate-spin" />
+          {analysisProgress < 50 ? 'Uploading Video...' : 'Detecting Cuts...'} ({analysisProgress}%)
+        </div>
+        <div className="w-full h-1.5 bg-neutral-800 rounded-full overflow-hidden border border-neutral-700">
+          <div
+            className="h-full bg-emerald-500 transition-all duration-300 ease-out shadow-[0_0_8px_rgba(16,185,129,0.5)]"
+            style={{ width: `${analysisProgress}%` }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Sub-component for detection sensitivity to avoid App re-renders
+const DetectionSensitivity: React.FC = () => {
+  const isAnalyzing = useVideoStore(state => state.isAnalyzing);
   const detectionThreshold = useVideoStore(state => state.detectionThreshold);
+  const setDetectionThreshold = useVideoStore(state => state.setDetectionThreshold);
+  const currentFile = useVideoStore(state => state.currentFile);
+  const { detectCuts } = useAnalysis();
+
+  return (
+    <div className="mt-4 pt-4 border-t border-neutral-800 shrink-0 flex flex-col gap-3">
+      <div className="flex justify-between items-center px-1">
+        <h3 className="text-sm font-semibold text-neutral-300">ツール</h3>
+        <div className="text-[10px] text-neutral-500 bg-neutral-800 px-2 py-0.5 rounded border border-neutral-700">
+          感度: {detectionThreshold}
+        </div>
+      </div>
+
+      <div className="px-1 space-y-2">
+        <div className="flex justify-between text-[10px] text-neutral-500">
+          <span>検出感度 (低いほど敏感)</span>
+        </div>
+        <input
+          type="range"
+          min="1"
+          max="100"
+          step="0.5"
+          disabled={isAnalyzing}
+          value={detectionThreshold}
+          onChange={(e) => setDetectionThreshold(parseFloat(e.target.value))}
+          className={`w-full h-1.5 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-violet-500 ${isAnalyzing ? 'opacity-50 cursor-not-allowed' : ''}`}
+        />
+      </div>
+
+      <button
+        onClick={() => currentFile && detectCuts(currentFile)}
+        disabled={isAnalyzing || !currentFile}
+        className={`w-full py-2 rounded-lg border flex justify-center items-center gap-2 transition-all duration-200 text-sm
+                    ${isAnalyzing || !currentFile
+            ? 'bg-neutral-800 text-neutral-500 border-neutral-700 cursor-not-allowed'
+            : 'bg-violet-700 hover:bg-violet-600 text-white border-violet-600 shadow-lg shadow-violet-900/20'}`}
+      >
+        <RefreshCw size={14} className={isAnalyzing ? 'animate-spin' : ''} />
+        {isAnalyzing ? '解析中...' : '閾値を適用して再解析'}
+      </button>
+
+      <button className="w-full bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-sm py-2 rounded-lg border border-neutral-700 transition-colors flex justify-center items-center gap-2">
+        <span className="text-emerald-500">+</span> グローバルタグ追加 (チーム・投手名)
+      </button>
+    </div>
+  );
+};
+
+function App() {
+  const videoUrl = useVideoStore(state => state.videoUrl);
+  const setVideoUrl = useVideoStore(state => state.setVideoUrl);
+  const setIsPlaying = useVideoStore(state => state.setIsPlaying);
   const setCurrentFile = useVideoStore(state => state.setCurrentFile);
   const backendStatus = useVideoStore(state => state.backendStatus);
   const backendUrl = useVideoStore(state => state.backendUrl);
@@ -39,54 +108,41 @@ function App() {
   useEffect(() => {
     initializePresets();
     checkBackendHealth();
-
-    // periodic check every 60s, skip if analyzing to reduce noise
     const interval = setInterval(() => {
-      const state = useVideoStore.getState();
-      if (!state.isAnalyzing) {
-        checkBackendHealth();
-      }
+      const { isAnalyzing } = useVideoStore.getState();
+      if (!isAnalyzing) checkBackendHealth();
     }, 60000);
     return () => clearInterval(interval);
   }, [initializePresets, checkBackendHealth]);
 
-  // Keyboard Shortcuts (use memoized versions)
+  // Keyboard Shortcuts: Pull current 'played' from store directly when key is pressed
   useHotkeys('space', (e) => {
     e.preventDefault();
+    const { videoUrl, isPlaying, setIsPlaying } = useVideoStore.getState();
     if (videoUrl) setIsPlaying(!isPlaying);
-  }, [isPlaying, videoUrl, setIsPlaying]);
+  }, []);
 
   useHotkeys('b', (e) => {
     e.preventDefault();
+    const { videoUrl, duration, played } = useVideoStore.getState();
     if (videoUrl && duration > 0) {
       addBookmark(played * duration);
     }
-  }, [played, duration, videoUrl, addBookmark]);
+  }, [addBookmark]);
 
   useHotkeys('shift+b', (e) => {
     e.preventDefault();
+    const { videoUrl, duration, played } = useVideoStore.getState();
     if (!videoUrl || duration === 0) return;
     const currentTime = played * duration;
     const state = useAnnotationStore.getState();
     const target = state.bookmarks.find(b => Math.abs(b.time - currentTime) < 0.5);
-    if (target) {
-      state.removeBookmark(target.id);
-    }
-  }, [played, duration, videoUrl]);
-
-  useHotkeys('left', (e) => {
-    e.preventDefault();
-    jumpToBookmark('prev');
-  }, [played, duration, videoUrl]);
-
-  useHotkeys('right', (e) => {
-    e.preventDefault();
-    jumpToBookmark('next');
-  }, [played, duration, videoUrl]);
+    if (target) state.removeBookmark(target.id);
+  }, []);
 
   const jumpToBookmark = (direction: 'next' | 'prev') => {
-    const state = useAnnotationStore.getState();
-    const bookmarks = state.bookmarks;
+    const { bookmarks, chunks, setSelectedChunkId } = useAnnotationStore.getState();
+    const { played, duration, setPlayed, videoUrl } = useVideoStore.getState();
     if (bookmarks.length === 0 || !videoUrl) return;
 
     const currentTime = played * duration;
@@ -97,21 +153,24 @@ function App() {
       targetTime = prev ? prev.time : 0;
     } else {
       const next = bookmarks.find(b => b.time > currentTime + 0.5);
-      if (next) {
-        targetTime = next.time;
-      } else {
-        return;
-      }
+      if (next) targetTime = next.time;
+      else return;
     }
 
-    const playedValue = targetTime / (duration || 1);
-    setPlayed(playedValue);
-
-    const targetChunk = state.chunks.find(c => Math.abs(c.startTime - targetTime) < 0.1);
-    if (targetChunk) {
-      state.setSelectedChunkId(targetChunk.id);
-    }
+    setPlayed(targetTime / (duration || 1));
+    const targetChunk = chunks.find(c => Math.abs(c.startTime - targetTime) < 0.1);
+    if (targetChunk) setSelectedChunkId(targetChunk.id);
   };
+
+  useHotkeys('left', (e) => {
+    e.preventDefault();
+    jumpToBookmark('prev');
+  }, []);
+
+  useHotkeys('right', (e) => {
+    e.preventDefault();
+    jumpToBookmark('next');
+  }, []);
 
   useHotkeys('mod+z', (e) => {
     e.preventDefault();
@@ -121,16 +180,15 @@ function App() {
   useHotkeys('[', (e) => {
     e.preventDefault();
     jumpToBookmark('prev');
-  }, [played, duration, videoUrl]);
+  }, []);
 
   useHotkeys(']', (e) => {
     e.preventDefault();
     jumpToBookmark('next');
-  }, [played, duration, videoUrl]);
+  }, []);
 
   const processFile = (file: File) => {
     if (file) {
-      console.log("Processing new file:", file.name);
       useAnnotationStore.setState({ bookmarks: [], chunks: [] });
       setCurrentFile(file);
       setVideoUrl(URL.createObjectURL(file));
@@ -165,12 +223,13 @@ function App() {
 
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
-    if (!videoUrl || duration === 0) return;
+    const { videoUrl, duration, played } = useVideoStore.getState();
+    if (!videoUrl || duration <= 0) return;
 
     const currentTime = played * duration;
-    const state = useAnnotationStore.getState();
+    const { chunks, selectedChunkId } = useAnnotationStore.getState();
 
-    const targetChunkId = state.selectedChunkId || state.chunks.find(
+    const targetChunkId = selectedChunkId || chunks.find(
       c => currentTime >= c.startTime && currentTime <= c.endTime
     )?.id;
 
@@ -225,7 +284,6 @@ function App() {
       </header>
 
       <main className="flex-1 flex overflow-hidden p-6 gap-6">
-        {/* Left side: Video Player and Timeline */}
         <div className="flex-1 flex flex-col gap-6 min-w-0">
           <div
             className={`flex-1 min-h-0 bg-neutral-900/50 rounded-2xl relative transition-all duration-300
@@ -259,31 +317,13 @@ function App() {
               </div>
             )}
 
-            {isAnalyzing && (
-              <div className="absolute inset-x-0 top-12 flex justify-center z-20 pointer-events-none">
-                <div className="bg-neutral-900/90 backdrop-blur-md border border-neutral-700 rounded-2xl p-4 shadow-2xl flex flex-col items-center gap-3 w-72 pointer-events-auto scale-in duration-300">
-                  <div className="flex items-center gap-2 text-emerald-400 text-sm font-semibold">
-                    <RefreshCw size={16} className="animate-spin" />
-                    {analysisProgress < 50 ? 'Uploading Video...' : 'Detecting Cuts...'} ({analysisProgress}%)
-                  </div>
-                  <div className="w-full h-1.5 bg-neutral-800 rounded-full overflow-hidden border border-neutral-700">
-                    <div
-                      className="h-full bg-emerald-500 transition-all duration-300 ease-out shadow-[0_0_8px_rgba(16,185,129,0.5)]"
-                      style={{ width: `${analysisProgress}%` }}
-                    />
-                  </div>
-                </div>
-              </div>
-            )}
+            <AnalysisOverlay />
           </div>
-
-          {/* Timeline Section */}
           <div className="shrink-0 h-40">
             <Timeline />
           </div>
         </div>
 
-        {/* Right side: Sidebar for tags and chunks */}
         <aside className="w-96 bg-neutral-900/80 border border-neutral-800 rounded-2xl flex flex-col shadow-2xl backdrop-blur-md shrink-0 z-10">
           <div className="p-5 border-b border-neutral-800 flex justify-between items-center">
             <div>
@@ -304,47 +344,7 @@ function App() {
                 <div className="flex-1 overflow-y-auto">
                   <ChunkList />
                 </div>
-
-                <div className="mt-4 pt-4 border-t border-neutral-800 shrink-0 flex flex-col gap-3">
-                  <div className="flex justify-between items-center px-1">
-                    <h3 className="text-sm font-semibold text-neutral-300">ツール</h3>
-                    <div className="text-[10px] text-neutral-500 bg-neutral-800 px-2 py-0.5 rounded border border-neutral-700">
-                      感度: {detectionThreshold}
-                    </div>
-                  </div>
-
-                  <div className="px-1 space-y-2">
-                    <div className="flex justify-between text-[10px] text-neutral-500">
-                      <span>検出感度 (低いほど敏感)</span>
-                    </div>
-                    <input
-                      type="range"
-                      min="1"
-                      max="100"
-                      step="0.5"
-                      disabled={isAnalyzing}
-                      value={detectionThreshold}
-                      onChange={(e) => useVideoStore.getState().setDetectionThreshold(parseFloat(e.target.value))}
-                      className={`w-full h-1.5 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-violet-500 ${isAnalyzing ? 'opacity-50 cursor-not-allowed' : ''}`}
-                    />
-                  </div>
-
-                  <button
-                    onClick={() => useVideoStore.getState().currentFile && detectCuts(useVideoStore.getState().currentFile!)}
-                    disabled={isAnalyzing || !useVideoStore.getState().currentFile}
-                    className={`w-full py-2 rounded-lg border flex justify-center items-center gap-2 transition-all duration-200 text-sm
-                      ${isAnalyzing || !useVideoStore.getState().currentFile
-                        ? 'bg-neutral-800 text-neutral-500 border-neutral-700 cursor-not-allowed'
-                        : 'bg-violet-700 hover:bg-violet-600 text-white border-violet-600 shadow-lg shadow-violet-900/20'}`}
-                  >
-                    <RefreshCw size={14} className={isAnalyzing ? 'animate-spin' : ''} />
-                    {isAnalyzing ? '解析中...' : '閾値を適用して再解析'}
-                  </button>
-
-                  <button className="w-full bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-sm py-2 rounded-lg border border-neutral-700 transition-colors flex justify-center items-center gap-2">
-                    <span className="text-emerald-500">+</span> グローバルタグ追加 (チーム・投手名)
-                  </button>
-                </div>
+                <DetectionSensitivity />
               </>
             ) : (
               <div className="rounded-xl border border-dashed border-neutral-700/50 p-8 flex flex-col items-center justify-center text-center h-full">
