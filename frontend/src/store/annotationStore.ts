@@ -8,6 +8,7 @@ interface AnnotationState {
     selectedChunkId: string | null;
     globalTags: Tag[];
     sectionTags: { id: string, startTime: number, endTime: number, tags: Tag[] }[];
+    skipNextRegenerate: boolean;
 
     addBookmark: (time: number) => void;
     removeBookmark: (id: string) => void;
@@ -29,6 +30,7 @@ interface AnnotationState {
     addPresetTag: (categoryId: string, name: string) => void;
     removePresetTag: (categoryId: string, name: string) => void;
     importTagPresets: (presets: Record<string, { label: string, tags: string[] }>) => void;
+    importAnnotations: (data: { globalTags: Tag[], sectionTags: { id: string, startTime: number, endTime: number, tags: Tag[] }[], bookmarks: Bookmark[], chunks: Chunk[] }) => void;
     initializePresets: () => Promise<void>;
 }
 
@@ -38,6 +40,7 @@ export const useAnnotationStore = create<AnnotationState>((set) => ({
     selectedChunkId: null,
     globalTags: [],
     sectionTags: [],
+    skipNextRegenerate: false,
     undoHistory: [],
     tagPresets: JSON.parse(localStorage.getItem('video_analyzer_tag_presets') || '{}'),
 
@@ -164,6 +167,7 @@ export const useAnnotationStore = create<AnnotationState>((set) => ({
 
     regenerateChunks: (duration) => {
         set((state) => {
+            if (state.skipNextRegenerate) return { ...state, skipNextRegenerate: false };
             if (duration <= 0) return state;
             const sortedBookmarks = [...state.bookmarks].sort((a, b) => a.time - b.time);
             const newChunks: Chunk[] = [];
@@ -242,6 +246,17 @@ export const useAnnotationStore = create<AnnotationState>((set) => ({
                 return c;
             })
         }));
+    },
+
+    importAnnotations: (data) => {
+        set({
+            globalTags: data.globalTags,
+            sectionTags: data.sectionTags,
+            bookmarks: data.bookmarks,
+            chunks: data.chunks,
+            selectedChunkId: null,
+            skipNextRegenerate: true,
+        });
     },
 
     importTagPresets: (presets) => {
