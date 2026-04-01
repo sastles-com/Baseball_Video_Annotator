@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { useVideoStore } from '../store/videoStore';
-import { useAnnotationStore } from '../store/annotationStore';
+import { useAnnotationStore, useFilteredChunks } from '../store/annotationStore';
 import { Bookmark as BookmarkIcon } from 'lucide-react';
 
 const WINDOW_SIZE = 60; // seconds for detailed view
@@ -8,6 +8,9 @@ const WINDOW_SIZE = 60; // seconds for detailed view
 export const Timeline: React.FC = () => {
     const { duration, played, setPlayed } = useVideoStore();
     const { bookmarks, addBookmark, removeBookmark, regenerateChunks, chunks, selectedChunkId } = useAnnotationStore();
+    const filteredChunks = useFilteredChunks();
+    const hasActiveFilter = filteredChunks.length !== chunks.length;
+    const filteredIds = new Set(filteredChunks.map(c => c.id));
     const overviewRef = useRef<HTMLDivElement>(null);
     const detailRef = useRef<HTMLDivElement>(null);
 
@@ -82,8 +85,11 @@ export const Timeline: React.FC = () => {
                         {chunks.map((chunk, index) => (
                             <div
                                 key={chunk.id}
-                                className={`h-full border-r border-neutral-800/50 ${index % 2 === 0 ? 'bg-blue-900/40' : 'bg-emerald-900/30'}`}
-                                style={{ width: `${((chunk.endTime - chunk.startTime) / duration) * 100}%` }}
+                                className={`h-full border-r border-neutral-800/50 transition-opacity ${index % 2 === 0 ? 'bg-blue-900/40' : 'bg-emerald-900/30'}`}
+                                style={{
+                                    width: `${((chunk.endTime - chunk.startTime) / duration) * 100}%`,
+                                    opacity: hasActiveFilter && !filteredIds.has(chunk.id) ? 0.2 : 1,
+                                }}
                             />
                         ))}
                     </div>
@@ -160,6 +166,8 @@ export const Timeline: React.FC = () => {
                             const isAlternate = index % 2 === 0;
                             const isSelected = selectedChunkId === chunk.id;
 
+                            const isDimmed = hasActiveFilter && !filteredIds.has(chunk.id);
+
                             return (
                                 <div
                                     key={chunk.id}
@@ -169,7 +177,8 @@ export const Timeline: React.FC = () => {
                                             : `border-neutral-800/30 ${isAlternate ? 'bg-blue-900/20' : 'bg-emerald-900/10'}`}`}
                                     style={{
                                         left: `${leftPct}%`,
-                                        width: `${widthPct}%`
+                                        width: `${widthPct}%`,
+                                        opacity: isDimmed ? 0.15 : 1,
                                     }}
                                 />
                             );

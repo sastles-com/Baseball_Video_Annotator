@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { useMemo } from 'react';
 import type { Bookmark, Chunk, Tag } from '../types/annotation';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -30,6 +31,11 @@ interface AnnotationState {
     removePresetTag: (categoryId: string, name: string) => void;
     importTagPresets: (presets: Record<string, { label: string, tags: string[] }>) => void;
     initializePresets: () => Promise<void>;
+
+    // Tag Filtering
+    activeTagFilters: Record<string, string[]>;
+    toggleTagFilter: (categoryId: string, tagName: string) => void;
+    clearAllFilters: () => void;
 }
 
 export const useAnnotationStore = create<AnnotationState>((set) => ({
@@ -40,6 +46,7 @@ export const useAnnotationStore = create<AnnotationState>((set) => ({
     sectionTags: [],
     undoHistory: [],
     tagPresets: JSON.parse(localStorage.getItem('video_analyzer_tag_presets') || '{}'),
+    activeTagFilters: {},
 
     setSelectedChunkId: (selectedChunkId) => set({ selectedChunkId }),
 
@@ -94,8 +101,9 @@ export const useAnnotationStore = create<AnnotationState>((set) => ({
     removeCategory: (id) => {
         set((state) => {
             const { [id]: _, ...newPresets } = state.tagPresets;
+            const { [id]: __, ...newFilters } = state.activeTagFilters;
             localStorage.setItem('video_analyzer_tag_presets', JSON.stringify(newPresets));
-            return { tagPresets: newPresets };
+            return { tagPresets: newPresets, activeTagFilters: newFilters };
         });
     },
 
@@ -248,4 +256,41 @@ export const useAnnotationStore = create<AnnotationState>((set) => ({
         set({ tagPresets: presets });
         localStorage.setItem('video_analyzer_tag_presets', JSON.stringify(presets));
     },
+
+    toggleTagFilter: (categoryId, tagName) => {
+        set((state) => {
+            const current = state.activeTagFilters[categoryId] || [];
+            const updated = current.includes(tagName)
+                ? current.filter(t => t !== tagName)
+                : [...current, tagName];
+            return {
+                activeTagFilters: {
+                    ...state.activeTagFilters,
+                    [categoryId]: updated,
+                },
+            };
+        });
+    },
+
+    clearAllFilters: () => set({ activeTagFilters: {} }),
 }));
+
+export const useFilteredChunks = () => {
+    const chunks = useAnnotationStore(s => s.chunks);
+    const activeTagFilters = useAnnotationStore(s => s.activeTagFilters);
+
+    return useMemo(() => {
+        const activeCategories = Object.entries(activeTagFilters)
+            .filter(([_, tags]) => tags.length > 0);
+
+        if (activeCategories.length === 0) return chunks;
+
+        return chunks.filter(chunk => {
+            const chunkTagNames = chunk.tags.map(t => t.name);
+            // AND between categories, OR within a category
+            return activeCategories.every(([_, filterTags]) =>
+                filterTags.some(ft => chunkTagNames.includes(ft))
+            );
+        });
+    }, [chunks, activeTagFilters]);
+};

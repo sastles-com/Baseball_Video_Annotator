@@ -11,6 +11,7 @@ import { ContextMenu } from './components/ContextMenu';
 import { SettingsModal } from './components/SettingsModal';
 import { ExportButton } from './components/ExportButton';
 import { ImportButton } from './components/ImportButton';
+import { TagFilter } from './components/TagFilter';
 import { useHotkeys } from 'react-hotkeys-hook';
 import { useAnalysis } from './hooks/useAnalysis';
 
@@ -344,6 +345,7 @@ function App() {
             {videoUrl ? (
               <>
                 <div className="flex-1 overflow-y-auto">
+                  <TagFilter />
                   <ChunkList />
                 </div>
                 <DetectionSensitivity />

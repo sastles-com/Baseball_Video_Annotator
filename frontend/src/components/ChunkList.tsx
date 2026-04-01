@@ -1,11 +1,13 @@
 import React from 'react';
-import { useAnnotationStore } from '../store/annotationStore';
+import { useAnnotationStore, useFilteredChunks } from '../store/annotationStore';
 import { useVideoStore } from '../store/videoStore';
 import { Tag as TagIcon, PlayCircle, Plus } from 'lucide-react';
 
 export const ChunkList: React.FC = () => {
     const { chunks, selectedChunkId, setSelectedChunkId } = useAnnotationStore();
+    const filteredChunks = useFilteredChunks();
     const { setPlayed, duration } = useVideoStore();
+    const isFiltered = filteredChunks.length !== chunks.length;
 
     const formatTime = (seconds: number) => {
         const m = Math.floor(seconds / 60);
@@ -32,7 +34,12 @@ export const ChunkList: React.FC = () => {
 
     return (
         <div className="flex flex-col gap-2 mt-4 max-h-64 overflow-y-auto pr-2 custom-scrollbar">
-            {chunks.map((chunk, index) => (
+            {isFiltered && (
+                <div className="text-[10px] text-neutral-500 mb-1">
+                    表示: {filteredChunks.length} / 全{chunks.length}件
+                </div>
+            )}
+            {filteredChunks.map((chunk, index) => (
                 <div
                     key={chunk.id}
                     className={`bg-neutral-800 border p-3 rounded-xl transition-all cursor-pointer flex flex-col gap-2 group
