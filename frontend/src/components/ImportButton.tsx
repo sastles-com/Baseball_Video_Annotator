@@ -1,10 +1,10 @@
 import React, { useRef } from 'react';
 import { Upload } from 'lucide-react';
-// import { useAnnotationStore } from '../store/annotationStore';
+import { useAnnotationStore } from '../store/annotationStore';
 
 export const ImportButton: React.FC = () => {
     const fileInputRef = useRef<HTMLInputElement>(null);
-    // const { bookmarks, chunks, globalTags, sectionTags } = useAnnotationStore(); // Would need a setter to actually import properly
+    const importAnnotations = useAnnotationStore((s) => s.importAnnotations);
 
     const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -14,15 +14,30 @@ export const ImportButton: React.FC = () => {
         reader.onload = (event) => {
             try {
                 const json = JSON.parse(event.target?.result as string);
-                console.log("Imported JSON:", json);
-                alert("JSON imported successfully! (State update logic pending)");
-                // TODO: Map json back to zustand store.
+
+                if (!json.annotations) {
+                    alert("無効なJSONファイルです。annotations フィールドが見つかりません。");
+                    return;
+                }
+
+                const { globalTags, sectionTags, bookmarks, chunks } = json.annotations;
+                importAnnotations({
+                    globalTags: globalTags || [],
+                    sectionTags: sectionTags || [],
+                    bookmarks: bookmarks || [],
+                    chunks: chunks || [],
+                });
+
+                alert("アノテーションをインポートしました。");
             } catch (err) {
-                alert("Failed to parse JSON.");
+                alert("JSONの解析に失敗しました。");
                 console.error(err);
             }
         };
         reader.readAsText(file);
+
+        // Reset input so the same file can be re-imported
+        e.target.value = '';
     };
 
     return (
